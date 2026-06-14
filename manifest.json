@@ -1,0 +1,24 @@
+{
+  "name": "StockScan — Warehouse Inventory",
+  "short_name": "StockScan",
+  "description": "Warehouse inventory management app",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#07090f",
+  "theme_color": "#0e1118",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

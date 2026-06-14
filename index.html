@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StockScan — Warehouse Inventory</title>
+<meta name="description" content="Warehouse inventory management app">
+<meta name="theme-color" content="#0e1118">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="StockScan">
+<link rel="manifest" href="manifest.json">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:#07090f; --surface:#0e1118; --surface2:#151b27; --surface3:#1c2438;
+  --border:#232d45; --border2:#2e3d5e;
+  --accent:#3d7fff; --accent-glow:rgba(61,127,255,0.18);
+  --green:#00d68f; --green-bg:rgba(0,214,143,0.10);
+  --red:#ff4d4d; --red-bg:rgba(255,77,77,0.10);
+  --yellow:#ffbe3d; --yellow-bg:rgba(255,190,61,0.10);
+  --orange:#ff8c3d; --orange-bg:rgba(255,140,61,0.10);
+  --text:#dce6f8; --text-muted:#6b7fa3; --text-dim:#3d4f72;
+  --mono:'JetBrains Mono',monospace; --sans:'Inter',sans-serif;
+  --radius:14px; --radius-sm:8px;
+}
+body { background:var(--bg); color:var(--text); font-family:var(--sans); min-height:100vh; display:flex; flex-direction:column; font-size:14px; }
+::-webkit-scrollbar { width:4px; }
+::-webkit-scrollbar-thumb { background:var(--border2); border-radius:2px; }
+
+/* ── Header ── */
+header { display:flex; align-items:center; justify-content:space-between; padding:0 24px; height:60px; background:var(--surface); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:100; }
+.logo { display:flex; align-items:center; gap:10px; }
+.logo-mark { width:36px; height:36px; background:linear-gradient(135deg,var(--accent),#6fa3ff); border-radius:10px; display:grid; place-items:center; font-size:18px; box-shadow:0 0 16px rgba(61,127,255,0.35); }
+.logo-name { font-size:18px; font-weight:700; letter-spacing:-0.3px; }
+.logo-name em { color:var(--accent); font-style:normal; }
+.header-pills { display:flex; gap:10px; }
+.pill { background:var(--surface2); border:1px solid var(--border); border-radius:20px; padding:5px 14px; display:flex; flex-direction:column; align-items:center; min-width:64px; }
+.pill-val { font-family:var(--mono); font-size:15px; font-weight:600; line-height:1.2; }
+.pill-lbl { font-size:10px; color:var(--text-muted); letter-spacing:.3px; }
+
+/* ── Nav ── */
+.nav { display:flex; background:var(--surface); border-bottom:1px solid var(--border); padding:0 20px; gap:2px; }
+.nav-btn { padding:13px 20px; font-size:13px; font-weight:600; font-family:var(--sans); color:var(--text-muted); background:none; border:none; border-bottom:2px solid transparent; cursor:pointer; transition:color .15s,border-color .15s; display:flex; align-items:center; gap:7px; }
+.nav-btn.active { color:var(--accent); border-bottom-color:var(--accent); }
+.nav-btn:hover:not(.active) { color:var(--text); }
+
+/* ── Pages ── */
+.page { display:none; flex:1; }
+.page.active { display:flex; }
+
+/* ══ SCAN PAGE ══ */
+#page-scan { flex-direction:row; }
+.scan-main { flex:1; min-width:0; padding:24px; display:flex; flex-direction:column; gap:20px; overflow-y:auto; max-height:calc(100vh - 110px); }
+
+.lookup-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; }
+.card-title { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--text-muted); margin-bottom:12px; }
+.lookup-row { display:flex; gap:10px; }
+.barcode-input { flex:1; background:var(--bg); border:1.5px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-family:var(--mono); font-size:16px; padding:11px 15px; outline:none; transition:border-color .15s,box-shadow .15s; }
+.barcode-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
+.barcode-input::placeholder { color:var(--text-dim); font-family:var(--sans); font-size:13px; }
+
+/* Result card */
+#result-card { background:var(--surface); border:1.5px solid var(--border); border-radius:var(--radius); padding:22px; display:none; transition:border-color .2s; }
+#result-card.found { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent-glow); }
+#result-card.not-found { border-color:var(--red); }
+.res-header { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:16px; gap:12px; }
+.res-name { font-size:22px; font-weight:700; line-height:1.2; }
+.res-badge { font-family:var(--mono); font-size:11px; color:var(--text-muted); background:var(--surface2); border:1px solid var(--border); padding:4px 10px; border-radius:20px; white-space:nowrap; }
+.stock-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:18px; }
+.stock-tile { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:13px 15px; display:flex; flex-direction:column; gap:4px; }
+.stock-tile.highlight-green { border-color:var(--green); background:var(--green-bg); }
+.stock-tile.highlight-yellow { border-color:var(--yellow); background:var(--yellow-bg); }
+.stock-tile.highlight-red { border-color:var(--red); background:var(--red-bg); }
+.tile-val { font-family:var(--mono); font-size:28px; font-weight:600; line-height:1; }
+.tile-val.green { color:var(--green); } .tile-val.yellow { color:var(--yellow); } .tile-val.red { color:var(--red); }
+.tile-lbl { font-size:11px; color:var(--text-muted); }
+
+/* Alert banner — shown inside result card when stock near threshold */
+#alert-banner { display:none; background:var(--orange-bg); border:1px solid var(--orange); border-radius:10px; padding:12px 15px; margin-bottom:14px; gap:10px; align-items:flex-start; }
+#alert-banner.show { display:flex; }
+#alert-banner.critical { background:var(--red-bg); border-color:var(--red); }
+.alert-icon { font-size:20px; flex-shrink:0; line-height:1; }
+.alert-body { flex:1; }
+.alert-title { font-size:13px; font-weight:700; color:var(--orange); margin-bottom:2px; }
+#alert-banner.critical .alert-title { color:var(--red); }
+.alert-msg { font-size:12px; color:var(--text-muted); line-height:1.5; }
+
+/* Action row: deduct + restock */
+.action-section { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:12px; }
+.action-tabs { display:flex; gap:2px; background:var(--bg); border-radius:8px; padding:3px; }
+.atab { flex:1; padding:7px; text-align:center; font-size:12px; font-weight:600; border-radius:6px; cursor:pointer; color:var(--text-muted); border:none; background:none; font-family:var(--sans); transition:all .15s; }
+.atab.active { background:var(--surface2); color:var(--text); }
+.action-body { display:flex; gap:10px; align-items:flex-end; }
+.action-body .field { flex:1; }
+.action-body label { font-size:11px; color:var(--text-muted); display:block; margin-bottom:6px; }
+.qty-input { width:100%; background:var(--bg); border:1.5px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--mono); font-size:22px; font-weight:600; padding:9px 13px; outline:none; transition:border-color .15s,box-shadow .15s; text-align:center; }
+.qty-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
+.restock-note { font-size:11px; color:var(--text-muted); background:var(--surface3); border-radius:6px; padding:6px 10px; }
+
+/* Alert threshold config */
+.threshold-config { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px 20px; }
+.threshold-config .card-title { margin-bottom:14px; }
+.threshold-row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+.threshold-field { display:flex; flex-direction:column; gap:5px; flex:1; min-width:120px; }
+.threshold-field label { font-size:11px; color:var(--text-muted); font-weight:600; text-transform:uppercase; letter-spacing:.5px; }
+.threshold-input { background:var(--bg); border:1.5px solid var(--border); border-radius:8px; color:var(--text); font-family:var(--mono); font-size:15px; font-weight:600; padding:8px 12px; outline:none; transition:border-color .15s; width:100%; }
+.threshold-input:focus { border-color:var(--accent); }
+.threshold-preview { font-size:11px; color:var(--text-muted); margin-top:4px; }
+.threshold-preview span { font-weight:600; }
+.threshold-preview .warn { color:var(--orange); }
+.threshold-preview .crit { color:var(--red); }
+
+/* ── Buttons ── */
+.btn { border:none; cursor:pointer; font-family:var(--sans); border-radius:var(--radius-sm); font-size:13px; font-weight:600; transition:all .15s; display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:10px 18px; white-space:nowrap; }
+.btn-primary { background:var(--accent); color:#fff; box-shadow:0 2px 12px rgba(61,127,255,0.3); }
+.btn-primary:hover { background:#5590ff; transform:translateY(-1px); }
+.btn-ghost { background:var(--surface2); color:var(--text); border:1px solid var(--border); }
+.btn-ghost:hover { background:var(--surface3); border-color:var(--border2); }
+.btn-green { background:var(--green); color:#042918; font-weight:700; box-shadow:0 2px 12px rgba(0,214,143,0.25); }
+.btn-green:hover { filter:brightness(1.1); transform:translateY(-1px); }
+.btn-orange { background:var(--orange-bg); color:var(--orange); border:1px solid rgba(255,140,61,0.35); font-weight:700; }
+.btn-orange:hover { background:rgba(255,140,61,0.2); }
+.btn-red { background:var(--red-bg); color:var(--red); border:1px solid rgba(255,77,77,0.35); }
+.btn-red:hover { background:rgba(255,77,77,0.2); }
+.btn-sm { padding:6px 12px; font-size:12px; }
+.btn-icon { padding:7px 10px; }
+
+/* ── Sidebar ── */
+.scan-sidebar { width:340px; flex-shrink:0; border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; max-height:calc(100vh - 110px); }
+.sidebar-tabs { display:flex; background:var(--surface); border-bottom:1px solid var(--border); padding:10px 12px 0; gap:4px; }
+.stab { flex:1; padding:8px 6px; font-size:12px; font-weight:600; font-family:var(--sans); color:var(--text-muted); background:none; border:none; border-bottom:2px solid transparent; cursor:pointer; text-align:center; transition:all .15s; }
+.stab.active { color:var(--accent); border-bottom-color:var(--accent); }
+.sidebar-body { flex:1; overflow-y:auto; padding:14px; }
+.stab-pane { display:none; flex-direction:column; gap:6px; }
+.stab-pane.active { display:flex; }
+.pitem { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:11px 13px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; transition:border-color .15s,background .15s; }
+.pitem:hover { border-color:var(--accent); background:var(--surface2); }
+.pitem.warn-item { border-left:3px solid var(--orange); }
+.pitem.crit-item { border-left:3px solid var(--red); }
+.pitem-name { font-size:13px; font-weight:600; }
+.pitem-sub { font-size:11px; color:var(--text-muted); margin-top:2px; font-family:var(--mono); }
+.pitem-qty { font-family:var(--mono); font-size:15px; font-weight:700; }
+.pitem-qty.ok { color:var(--green); } .pitem-qty.mid { color:var(--yellow); } .pitem-qty.low { color:var(--red); }
+.pitem-of { font-size:10px; color:var(--text-muted); font-family:var(--mono); }
+
+/* Low-stock summary badge in sidebar */
+.low-summary { background:var(--red-bg); border:1px solid var(--red); border-radius:8px; padding:8px 12px; font-size:12px; color:var(--red); font-weight:600; display:flex; align-items:center; gap:8px; }
+
+.hitem { background:var(--surface); border-radius:10px; border:1px solid var(--border); border-left:3px solid var(--accent); padding:10px 13px; display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+.hitem-name { font-size:13px; font-weight:600; }
+.hitem-code { font-family:var(--mono); font-size:11px; color:var(--text-muted); }
+.hitem-time { font-size:11px; color:var(--text-muted); margin-top:2px; }
+.hitem-qty { font-family:var(--mono); font-weight:700; font-size:15px; color:var(--red); white-space:nowrap; }
+.hitem-qty.restock { color:var(--green); }
+.hitem-after { font-family:var(--mono); font-size:10px; color:var(--text-muted); }
+
+/* ══ PRODUCTS PAGE ══ */
+#page-products { flex-direction:column; padding:24px; gap:18px; overflow-y:auto; }
+.pg-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+.pg-title { font-size:20px; font-weight:700; }
+.pg-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.search-wrap { position:relative; }
+.search-icon { position:absolute; right:11px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:14px; pointer-events:none; }
+.search-input { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-family:var(--sans); font-size:13px; padding:8px 34px 8px 13px; outline:none; width:200px; transition:border-color .15s,box-shadow .15s; }
+.search-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
+.search-input::placeholder { color:var(--text-muted); }
+.cat-filter { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-family:var(--sans); font-size:13px; padding:8px 12px; outline:none; cursor:pointer; transition:border-color .15s; }
+.cat-filter:focus { border-color:var(--accent); }
+
+.ptable { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+.ptable-head { display:grid; grid-template-columns:2.2fr 1.1fr 90px 90px 110px; padding:10px 18px; background:var(--surface2); border-bottom:1px solid var(--border); }
+.th { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:var(--text-muted); }
+.prow { display:grid; grid-template-columns:2.2fr 1.1fr 90px 90px 110px; padding:14px 18px; border-bottom:1px solid var(--border); align-items:center; transition:background .1s; }
+.prow:last-child { border-bottom:none; }
+.prow:hover { background:var(--surface2); }
+.prow.warn-row { border-left:3px solid var(--orange); }
+.prow.crit-row { border-left:3px solid var(--red); }
+.prow-name { font-size:13px; font-weight:600; }
+.prow-code { font-family:var(--mono); font-size:11px; color:var(--text-muted); }
+.prow-cat { font-size:12px; color:var(--text-muted); }
+.prow-num { font-family:var(--mono); font-size:15px; font-weight:600; }
+.prow-actions { display:flex; gap:6px; }
+.mini-bar-wrap { display:flex; flex-direction:column; gap:3px; }
+.mini-bar { height:3px; border-radius:2px; background:var(--border); overflow:hidden; }
+.mini-bar-fill { height:100%; border-radius:2px; transition:width .3s; }
+
+/* ── Modals ── */
+.overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); backdrop-filter:blur(4px); z-index:200; align-items:center; justify-content:center; }
+.overlay.open { display:flex; }
+.modal { background:var(--surface); border:1px solid var(--border2); border-radius:var(--radius); padding:24px; width:420px; max-width:95vw; animation:fadeUp .2s ease; }
+.modal-sm { background:var(--surface); border:1px solid var(--red); border-radius:var(--radius); padding:24px; width:360px; max-width:95vw; animation:fadeUp .2s ease; }
+@keyframes fadeUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+.modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
+.modal-head h3 { font-size:16px; font-weight:700; }
+.modal-x { background:none; border:none; color:var(--text-muted); font-size:22px; cursor:pointer; line-height:1; width:28px; height:28px; display:grid; place-items:center; border-radius:6px; transition:background .15s; }
+.modal-x:hover { background:var(--surface2); }
+.form-grid { display:flex; flex-direction:column; gap:14px; }
+.form-field label { display:block; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text-muted); margin-bottom:6px; }
+.form-input { width:100%; background:var(--bg); border:1.5px solid var(--border); border-radius:var(--radius-sm); color:var(--text); font-family:var(--sans); font-size:14px; padding:10px 13px; outline:none; transition:border-color .15s,box-shadow .15s; }
+.form-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
+.form-input:disabled { opacity:.45; cursor:not-allowed; }
+.modal-foot { display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
+
+/* Toast */
+#toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(80px); background:var(--surface2); border:1px solid var(--border2); border-radius:24px; padding:10px 20px; font-size:13px; font-weight:500; transition:transform .3s cubic-bezier(.34,1.56,.64,1); z-index:400; white-space:nowrap; pointer-events:none; display:flex; align-items:center; gap:8px; box-shadow:0 8px 32px rgba(0,0,0,.4); }
+#toast.show { transform:translateX(-50%) translateY(0); }
+#toast.success { border-color:var(--green); color:var(--green); }
+#toast.error { border-color:var(--red); color:var(--red); }
+#toast.warn { border-color:var(--orange); color:var(--orange); }
+
+.empty { text-align:center; padding:40px 20px; color:var(--text-muted); font-size:13px; line-height:2; }
+.empty strong { color:var(--text); }
+.slabel { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); padding:0 2px 8px; }
+
+@media(max-width:720px){
+  #page-scan{flex-direction:column-reverse}
+  .scan-sidebar{width:100%;max-height:40vh;border-right:none;border-top:1px solid var(--border)}
+  .scan-main{max-height:none}
+  .header-pills{display:none}
+  .ptable-head,.prow{grid-template-columns:1fr 70px 100px}
+  .th:nth-child(2),.th:nth-child(4),.prow>.prow-cat,.prow>div:nth-child(4){display:none}
+  #page-products{padding:14px}
+  .search-input{width:160px}
+  .stock-grid{grid-template-columns:1fr 1fr}
+  .stock-grid .stock-tile:last-child{display:none}
+  .threshold-row{flex-direction:column}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-mark">📦</div>
+    <div class="logo-name">Stock<em>Scan</em></div>
+  </div>
+  <div class="header-pills">
+    <div class="pill"><div class="pill-val" id="hstat-products">0</div><div class="pill-lbl">Products</div></div>
+    <div class="pill"><div class="pill-val" id="hstat-scans">0</div><div class="pill-lbl">Scans Today</div></div>
+    <div class="pill"><div class="pill-val" id="hstat-out">0</div><div class="pill-lbl">Items Out</div></div>
+    <div class="pill"><div class="pill-val" id="hstat-alerts" style="color:var(--orange)">0</div><div class="pill-lbl">Low Stock</div></div>
+  </div>
+</header>
+
+<nav class="nav">
+  <button class="nav-btn active" data-page="scan">🔍 Scan</button>
+  <button class="nav-btn" data-page="products">📋 Products</button>
+  <button class="nav-btn" data-page="alerts">🔔 Alerts</button>
+</nav>
+
+<!-- ══ SCAN PAGE ══ -->
+<div class="page active" id="page-scan">
+
+  <div class="scan-sidebar">
+    <div class="sidebar-tabs">
+      <button class="stab active" data-stab="products">All Products</button>
+      <button class="stab" data-stab="history">History</button>
+    </div>
+    <div class="sidebar-body">
+      <div class="stab-pane active" id="stab-products">
+        <div id="low-summary-bar"></div>
+        <div class="slabel">Inventory</div>
+        <div id="scan-list"></div>
+      </div>
+      <div class="stab-pane" id="stab-history">
+        <div class="slabel">Recent Activity</div>
+        <div id="history-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="scan-main">
+
+    <div class="lookup-card">
+      <div class="card-title">Enter Barcode</div>
+      <div class="lookup-row">
+        <input class="barcode-input" id="manual-input" placeholder="Type barcode here…" inputmode="numeric" autocomplete="off" />
+        <button class="btn btn-primary" id="btn-lookup">Search</button>
+      </div>
+      <div style="margin-top:12px">
+        <div class="card-title" style="margin-bottom:8px">Search by Name</div>
+        <div style="position:relative">
+          <input class="barcode-input" id="name-search-input" placeholder="Type product name…" autocomplete="off" style="font-size:13px;padding:10px 15px;width:100%" />
+          <div id="name-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius-sm);z-index:50;max-height:220px;overflow-y:auto;margin-top:4px;box-shadow:0 8px 24px rgba(0,0,0,.4)"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="result-card">
+      <div class="res-header">
+        <div class="res-name" id="res-name">—</div>
+        <div class="res-badge" id="res-code">—</div>
+      </div>
+
+      <!-- ⚠️ Alert Banner -->
+      <div id="alert-banner">
+        <div class="alert-icon" id="alert-icon">⚠️</div>
+        <div class="alert-body">
+          <div class="alert-title" id="alert-title">Low Stock Warning</div>
+          <div class="alert-msg" id="alert-msg"></div>
+        </div>
+      </div>
+
+      <div class="stock-grid">
+        <div class="stock-tile" id="tile-current">
+          <div class="tile-val green" id="res-current">—</div>
+          <div class="tile-lbl">Current Stock</div>
+        </div>
+        <div class="stock-tile">
+          <div class="tile-val" id="res-original" style="color:var(--text-muted)">—</div>
+          <div class="tile-lbl">Original Stock</div>
+        </div>
+        <div class="stock-tile">
+          <div class="tile-val" id="res-pct" style="color:var(--text-muted)">—</div>
+          <div class="tile-lbl">Remaining</div>
+        </div>
+      </div>
+
+      <!-- Deduct / Restock tabs -->
+      <div class="action-section">
+        <div class="action-tabs">
+          <button class="atab active" id="atab-deduct" onclick="switchAction('deduct')">↓ Deduct</button>
+          <button class="atab" id="atab-restock" onclick="switchAction('restock')">↑ Restock</button>
+        </div>
+        <div class="action-body">
+          <div class="field">
+            <label id="action-label">Quantity to Deduct</label>
+            <input class="qty-input" id="qty-input" type="number" min="1" value="1" inputmode="numeric" />
+          </div>
+          <button class="btn btn-green" id="btn-action">Deduct ↓</button>
+        </div>
+        <div class="restock-note" id="restock-note" style="display:none">
+          ℹ️ Restock adds to current stock. Original quantity won't change unless new total exceeds it.
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Alert threshold config (in scan page) -->
+    <div class="threshold-config" id="threshold-box" style="display:none">
+      <div class="card-title">⚙️ Alert Thresholds for: <span id="thresh-product-name" style="color:var(--text)">—</span></div>
+      <div class="threshold-row">
+        <div class="threshold-field">
+          <label>Warning at (qty)</label>
+          <input class="threshold-input" id="thresh-qty-warn" type="number" min="0" placeholder="e.g. 50" />
+        </div>
+        <div class="threshold-field">
+          <label>Critical at (qty)</label>
+          <input class="threshold-input" id="thresh-qty-crit" type="number" min="0" placeholder="e.g. 20" />
+        </div>
+        <div class="threshold-field">
+          <label>Warning at (%)</label>
+          <input class="threshold-input" id="thresh-pct-warn" type="number" min="0" max="100" placeholder="e.g. 30" />
+        </div>
+        <div class="threshold-field">
+          <label>Critical at (%)</label>
+          <input class="threshold-input" id="thresh-pct-crit" type="number" min="0" max="100" placeholder="e.g. 10" />
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="saveThresholds()" style="align-self:flex-end;flex-shrink:0">Save</button>
+      </div>
+      <div class="threshold-preview" id="thresh-preview"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══ PRODUCTS PAGE ══ -->
+<div class="page" id="page-products">
+  <div class="pg-header">
+    <h2 class="pg-title">Manage Products</h2>
+    <div class="pg-controls">
+      <div class="search-wrap">
+        <input class="search-input" id="search-input" placeholder="Search…" />
+        <span class="search-icon">🔍</span>
+      </div>
+      <select class="cat-filter" id="cat-filter">
+        <option value="">All Categories</option>
+      </select>
+      <button class="btn btn-ghost" id="btn-export" title="Export all data">⬇ Export</button>
+      <label class="btn btn-ghost" title="Import data from file" style="cursor:pointer">
+        ⬆ Import <input type="file" id="import-input" accept=".json" style="display:none" />
+      </label>
+      <button class="btn btn-primary" id="btn-new">+ Add Product</button>
+    </div>
+  </div>
+  <div class="ptable">
+    <div class="ptable-head">
+      <div class="th">Product</div>
+      <div class="th">Category</div>
+      <div class="th">Current</div>
+      <div class="th">Original</div>
+      <div class="th">Actions</div>
+    </div>
+    <div id="ptable-body"></div>
+  </div>
+</div>
+
+<!-- ══ ALERTS PAGE ══ -->
+<div class="page" id="page-alerts">
+  <div style="padding:24px;display:flex;flex-direction:column;gap:18px;flex:1;overflow-y:auto">
+    <div class="pg-header">
+      <h2 class="pg-title">🔔 Stock Alerts</h2>
+    </div>
+    <div id="alerts-body"></div>
+  </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="overlay" id="modal-product">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="modal-title-text">Add Product</h3>
+      <button class="modal-x" id="modal-close">×</button>
+    </div>
+    <div class="form-grid">
+      <div class="form-field"><label>Barcode *</label><input class="form-input" id="m-barcode" placeholder="e.g. 6281234567890" inputmode="numeric" /></div>
+      <div class="form-field"><label>Product Name *</label><input class="form-input" id="m-name" placeholder="e.g. Safety Helmet" /></div>
+      <div class="form-field"><label>Total Quantity *</label><input class="form-input" id="m-qty" type="number" min="1" placeholder="e.g. 500" inputmode="numeric" /></div>
+      <div class="form-field"><label>Category (optional)</label><input class="form-input" id="m-cat" placeholder="e.g. Tools, Safety…" /></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" id="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="modal-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Modal -->
+<div class="overlay" id="modal-delete">
+  <div class="modal-sm">
+    <div class="modal-head"><h3 style="color:var(--red)">Delete Product</h3></div>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:18px;line-height:1.8">
+      Are you sure you want to delete <strong id="delete-name" style="color:var(--text)"></strong>?<br>This cannot be undone.
+    </p>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" id="delete-cancel">Cancel</button>
+      <button class="btn btn-red" id="delete-confirm">Delete</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const LS = {
+  get: k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set: (k,v) => localStorage.setItem(k, JSON.stringify(v))
+};
+
+// ─── State ─────────────────────────────────────────────────────
+let products     = LS.get('ss_products')    || {};
+let history      = LS.get('ss_history')     || [];
+let thresholds   = LS.get('ss_thresholds')  || {}; // per-product thresholds
+let totalOut     = history.reduce((s,h) => s + (h.type!=='restock'?h.qty:0), 0);
+let currentCode  = null;
+let editingCode  = null;
+let deletingCode = null;
+let actionMode   = 'deduct'; // 'deduct' | 'restock'
+
+// ─── Helpers ────────────────────────────────────────────────────
+const pct = (q,o) => o > 0 ? q/o : 0;
+const stockCls = (q,o) => pct(q,o) <= .1 ? 'red' : pct(q,o) <= .3 ? 'yellow' : 'green';
+const listCls  = (q,o) => q <= 0 ? 'low' : pct(q,o) <= .3 ? 'mid' : 'ok';
+const tileHL   = (q,o) => pct(q,o) <= .1 ? 'highlight-red' : pct(q,o) <= .3 ? 'highlight-yellow' : 'highlight-green';
+
+// Get alert level for a product: 'critical' | 'warning' | null
+function alertLevel(code, qty, original) {
+  const t = thresholds[code] || {};
+  const qtyWarn = t.qtyWarn || null;
+  const qtyCrit = t.qtyCrit || null;
+  const pctWarn = t.pctWarn != null ? t.pctWarn/100 : 0.30; // default 30%
+  const pctCrit = t.pctCrit != null ? t.pctCrit/100 : 0.10; // default 10%
+
+  const isCrit = (qtyCrit != null && qty <= qtyCrit) || pct(qty,original) <= pctCrit;
+  const isWarn = (qtyWarn != null && qty <= qtyWarn) || pct(qty,original) <= pctWarn;
+  if (qty <= 0) return 'critical';
+  if (isCrit)   return 'critical';
+  if (isWarn)   return 'warning';
+  return null;
+}
+
+function alertMsg(code, qty, original) {
+  const level = alertLevel(code, qty, original);
+  if (!level) return null;
+  const t = thresholds[code] || {};
+  const remaining = Math.round(pct(qty,original)*100);
+  if (qty <= 0) return { level:'critical', title:'Out of Stock!', msg:'This product has run out completely.' };
+  if (level === 'critical') {
+    const lines = [`Only ${qty} units left (${remaining}% of original).`];
+    if (t.qtyCrit) lines.push(`Critical threshold: ${t.qtyCrit} units.`);
+    return { level:'critical', title:'Critical Stock Level', msg:lines.join(' ') };
+  }
+  const lines = [`${qty} units left (${remaining}% of original).`];
+  if (t.qtyWarn) lines.push(`Warning threshold: ${t.qtyWarn} units.`);
+  return { level:'warning', title:'Low Stock Warning', msg:lines.join(' ') };
+}
+
+let toastT;
+function toast(msg, type='') {
+  clearTimeout(toastT);
+  $('toast').innerHTML = msg;
+  $('toast').className = 'show ' + type;
+  toastT = setTimeout(() => $('toast').className = '', 3800);
+}
+
+function scansToday() {
+  const t = new Date().toDateString(), s = LS.get('ss_scans') || {};
+  return s.date === t ? s.count : 0;
+}
+function bumpScans() {
+  const t = new Date().toDateString(), s = LS.get('ss_scans') || {};
+  LS.set('ss_scans', { date:t, count:(s.date===t?s.count:0)+1 });
+}
+function fmtTime(ts) {
+  return new Date(ts).toLocaleString('en-US', { hour:'2-digit', minute:'2-digit', day:'numeric', month:'short' });
+}
+
+// ─── Stats ──────────────────────────────────────────────────────
+function renderStats() {
+  const ps = Object.entries(products);
+  $('hstat-products').textContent = ps.length;
+  $('hstat-scans').textContent    = scansToday();
+  $('hstat-out').textContent      = totalOut;
+  const lowCount = ps.filter(([c,p]) => alertLevel(c,p.qty,p.original)).length;
+  $('hstat-alerts').textContent   = lowCount;
+  $('hstat-alerts').style.color   = lowCount > 0 ? 'var(--orange)' : 'var(--text-muted)';
+}
+
+// ─── Alert banner in result card ────────────────────────────────
+function updateAlertBanner(code, qty, original) {
+  const info = alertMsg(code, qty, original);
+  const banner = $('alert-banner');
+  if (!info) { banner.className = ''; banner.style.display='none'; return; }
+  banner.style.display = 'flex';
+  banner.className = info.level === 'critical' ? 'critical show' : 'show';
+  $('alert-icon').textContent = info.level === 'critical' ? '🚨' : '⚠️';
+  $('alert-title').textContent = info.title;
+  $('alert-msg').textContent   = info.msg;
+}
+
+// ─── Threshold config panel ──────────────────────────────────────
+function showThresholds(code) {
+  const p = products[code];
+  const t = thresholds[code] || {};
+  $('thresh-product-name').textContent = p.name;
+  $('thresh-qty-warn').value  = t.qtyWarn != null ? t.qtyWarn : '';
+  $('thresh-qty-crit').value  = t.qtyCrit != null ? t.qtyCrit : '';
+  $('thresh-pct-warn').value  = t.pctWarn != null ? t.pctWarn : 30;
+  $('thresh-pct-crit').value  = t.pctCrit != null ? t.pctCrit : 10;
+  $('threshold-box').style.display = 'block';
+  updateThresholdPreview(code);
+}
+
+function updateThresholdPreview(code) {
+  const p = products[code];
+  if (!p) return;
+  const qw = parseInt($('thresh-qty-warn').value)||null;
+  const qc = parseInt($('thresh-qty-crit').value)||null;
+  const pw = parseFloat($('thresh-pct-warn').value)||30;
+  const pc = parseFloat($('thresh-pct-crit').value)||10;
+  const lines = [];
+  if (qw) lines.push(`<span class="warn">⚠️ Warning</span> when qty ≤ <b>${qw}</b>`);
+  lines.push(`<span class="warn">⚠️ Warning</span> when stock ≤ <b>${pw}%</b> (≤ ${Math.floor(p.original*pw/100)} units)`);
+  if (qc) lines.push(`<span class="crit">🚨 Critical</span> when qty ≤ <b>${qc}</b>`);
+  lines.push(`<span class="crit">🚨 Critical</span> when stock ≤ <b>${pc}%</b> (≤ ${Math.floor(p.original*pc/100)} units)`);
+  $('thresh-preview').innerHTML = lines.join(' &nbsp;·&nbsp; ');
+}
+
+['thresh-qty-warn','thresh-qty-crit','thresh-pct-warn','thresh-pct-crit'].forEach(id => {
+  $(id).addEventListener('input', () => { if (currentCode) updateThresholdPreview(currentCode); });
+});
+
+function saveThresholds() {
+  if (!currentCode) return;
+  thresholds[currentCode] = {
+    qtyWarn: parseInt($('thresh-qty-warn').value)||null,
+    qtyCrit: parseInt($('thresh-qty-crit').value)||null,
+    pctWarn: parseFloat($('thresh-pct-warn').value)||30,
+    pctCrit: parseFloat($('thresh-pct-crit').value)||10
+  };
+  LS.set('ss_thresholds', thresholds);
+  const p = products[currentCode];
+  updateAlertBanner(currentCode, p.qty, p.original);
+  renderScanList(); renderStats(); renderAlertsPage();
+  toast('✅ Thresholds saved', 'success');
+}
+
+// ─── Action mode (deduct / restock) ─────────────────────────────
+function switchAction(mode) {
+  actionMode = mode;
+  $('atab-deduct').classList.toggle('active', mode==='deduct');
+  $('atab-restock').classList.toggle('active', mode==='restock');
+  $('action-label').textContent = mode==='deduct' ? 'Quantity to Deduct' : 'Quantity to Restock';
+  $('btn-action').textContent   = mode==='deduct' ? 'Deduct ↓' : 'Restock ↑';
+  $('btn-action').className     = mode==='deduct' ? 'btn btn-green' : 'btn btn-orange';
+  $('restock-note').style.display = mode==='restock' ? 'block' : 'none';
+}
+
+// ─── Scan list ───────────────────────────────────────────────────
+function renderScanList() {
+  const ps = Object.entries(products);
+  let html = '';
+  const lowItems = ps.filter(([c,p]) => alertLevel(c,p.qty,p.original));
+  if (lowItems.length) {
+    $('low-summary-bar').innerHTML = `<div class="low-summary">🔔 ${lowItems.length} product${lowItems.length>1?'s':''} need attention</div>`;
+  } else {
+    $('low-summary-bar').innerHTML = '';
+  }
+  if (!ps.length) {
+    $('scan-list').innerHTML = '<div class="empty">No products yet.<br>Go to <strong>Products</strong> to add some.</div>';
+    return;
+  }
+  // Sort: alerts first
+  const sorted = [...ps].sort(([ca,pa],[cb,pb]) => {
+    const la = alertLevel(ca,pa.qty,pa.original) ? 0 : 1;
+    const lb = alertLevel(cb,pb.qty,pb.original) ? 0 : 1;
+    return la - lb;
+  });
+  html = sorted.map(([code,p]) => {
+    const lvl = alertLevel(code,p.qty,p.original);
+    const rowCls = lvl==='critical'?'crit-item':lvl==='warning'?'warn-item':'';
+    return `<div class="pitem ${rowCls}" onclick="lookup('${code.replace(/'/g,"\\'")}')">
+      <div>
+        <div class="pitem-name">${p.name}</div>
+        <div class="pitem-sub">${p.category?p.category+' · ':''}${code}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="pitem-qty ${listCls(p.qty,p.original)}">${p.qty}</div>
+        <div class="pitem-of">/ ${p.original}</div>
+      </div>
+    </div>`;
+  }).join('');
+  $('scan-list').innerHTML = html;
+}
+
+// ─── History ─────────────────────────────────────────────────────
+function renderHistory() {
+  if (!history.length) {
+    $('history-list').innerHTML = '<div class="empty">No activity yet.</div>';
+    return;
+  }
+  $('history-list').innerHTML = [...history].reverse().slice(0,60).map(h => {
+    const isRestock = h.type==='restock';
+    return `<div class="hitem">
+      <div>
+        <div class="hitem-name">${h.name}</div>
+        <div class="hitem-code">${h.code}</div>
+        <div class="hitem-time">${fmtTime(h.time)}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="hitem-qty${isRestock?' restock':''}">${isRestock?'+':'-'}${h.qty}</div>
+        <div class="hitem-after">${h.after} left</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ─── Products table ──────────────────────────────────────────────
+function renderTable(filter='', cat='') {
+  const q = filter.toLowerCase();
+  const ps = Object.entries(products).filter(([code,p]) => {
+    const matchQ = !q || p.name.toLowerCase().includes(q) || code.includes(q) || (p.category||'').toLowerCase().includes(q);
+    const matchC = !cat || (p.category||'') === cat;
+    return matchQ && matchC;
+  });
+  // Refresh category filter
+  const cats = [...new Set(Object.values(products).map(p=>p.category||'').filter(Boolean))].sort();
+  const curCat = $('cat-filter').value;
+  $('cat-filter').innerHTML = '<option value="">All Categories</option>' + cats.map(c=>`<option value="${c}"${c===curCat?' selected':''}>${c}</option>`).join('');
+
+  if (!ps.length) {
+    $('ptable-body').innerHTML = `<div class="empty">${filter||cat?'No matching products.':'No products yet. Click <strong>+ Add Product</strong> to get started.'}</div>`;
+    return;
+  }
+  $('ptable-body').innerHTML = ps.map(([code,p]) => {
+    const cl = stockCls(p.qty,p.original);
+    const barColor = cl==='green'?'var(--green)':cl==='yellow'?'var(--yellow)':'var(--red)';
+    const barW = Math.max(2, Math.round(pct(p.qty,p.original)*100));
+    const lvl = alertLevel(code,p.qty,p.original);
+    const rowCls = lvl==='critical'?'prow crit-row':lvl==='warning'?'prow warn-row':'prow';
+    return `<div class="${rowCls}">
+      <div><div class="prow-name">${p.name}</div><div class="prow-code">${code}</div></div>
+      <div class="prow-cat">${p.category||'—'}</div>
+      <div class="mini-bar-wrap">
+        <div class="prow-num" style="color:${barColor}">${p.qty}</div>
+        <div class="mini-bar"><div class="mini-bar-fill" style="width:${barW}%;background:${barColor}"></div></div>
+      </div>
+      <div class="prow-num" style="color:var(--text-muted)">${p.original}</div>
+      <div class="prow-actions">
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="openEdit('${code.replace(/'/g,"\\'")}')">✏️</button>
+        <button class="btn btn-red btn-sm btn-icon" onclick="openDelete('${code.replace(/'/g,"\\'")}')">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ─── Alerts page ─────────────────────────────────────────────────
+function renderAlertsPage() {
+  const alerts = Object.entries(products)
+    .map(([code,p]) => ({ code, p, info:alertMsg(code,p.qty,p.original) }))
+    .filter(x => x.info)
+    .sort((a,b) => (a.info.level==='critical'?0:1) - (b.info.level==='critical'?0:1));
+
+  if (!alerts.length) {
+    $('alerts-body').innerHTML = '<div class="empty" style="padding:60px 20px">✅ <strong>All products are well-stocked.</strong><br>No alerts at this time.</div>';
+    return;
+  }
+  $('alerts-body').innerHTML = alerts.map(({code,p,info}) => {
+    const isCrit = info.level==='critical';
+    const color  = isCrit ? 'var(--red)' : 'var(--orange)';
+    const bg     = isCrit ? 'var(--red-bg)' : 'var(--orange-bg)';
+    return `<div style="background:${bg};border:1px solid ${color};border-radius:12px;padding:16px 20px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:${color};margin-bottom:4px">${isCrit?'🚨':'⚠️'} ${p.name}</div>
+        <div style="font-size:12px;color:var(--text-muted);font-family:var(--mono)">${code}${p.category?' · '+p.category:''}</div>
+        <div style="font-size:13px;color:var(--text-muted);margin-top:6px">${info.msg}</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-shrink:0">
+        <div style="text-align:center">
+          <div style="font-family:var(--mono);font-size:28px;font-weight:700;color:${color};line-height:1">${p.qty}</div>
+          <div style="font-size:10px;color:var(--text-muted)">of ${p.original}</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="lookup('${code.replace(/'/g,"\\'")}');navTo('scan')">Go to product</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ─── Lookup ──────────────────────────────────────────────────────
+function lookup(code) {
+  code = String(code).trim(); if (!code) return;
+  currentCode = null;
+  const p = products[code];
+  $('result-card').style.display = 'block';
+  if (!p) {
+    $('result-card').className = 'not-found';
+    $('res-name').textContent = 'Product not found';
+    $('res-code').textContent = code;
+    $('res-current').textContent = $('res-original').textContent = $('res-pct').textContent = '—';
+    $('res-current').className = 'tile-val';
+    $('tile-current').className = 'stock-tile';
+    $('alert-banner').style.display = 'none';
+    $('threshold-box').style.display = 'none';
+    toast('❌ Not found: ' + code, 'error');
+    return;
+  }
+  currentCode = code;
+  $('result-card').className = 'found';
+  $('res-name').textContent = p.name;
+  $('res-code').textContent = code;
+  const cl = stockCls(p.qty, p.original);
+  $('res-current').textContent = p.qty;
+  $('res-current').className = 'tile-val ' + cl;
+  $('tile-current').className = 'stock-tile ' + tileHL(p.qty, p.original);
+  $('res-original').textContent = p.original;
+  $('res-pct').textContent = Math.round(pct(p.qty,p.original)*100) + '%';
+  $('qty-input').value = 1;
+  $('qty-input').max = actionMode==='deduct' ? p.qty : 999999;
+  updateAlertBanner(code, p.qty, p.original);
+  showThresholds(code);
+  bumpScans(); renderStats();
+  activeStab('products'); renderScanList();
+}
+
+$('btn-lookup').addEventListener('click', () => lookup($('manual-input').value));
+$('manual-input').addEventListener('keydown', e => { if(e.key==='Enter') lookup($('manual-input').value); });
+
+// ─── Name Search ──────────────────────────────────────────────────
+$('name-search-input').addEventListener('input', function() {
+  const q = this.value.trim().toLowerCase();
+  const dd = $('name-dropdown');
+  if (!q) { dd.style.display='none'; return; }
+  const matches = Object.entries(products)
+    .filter(([c,p]) => p.name.toLowerCase().includes(q) || (p.category||'').toLowerCase().includes(q))
+    .slice(0, 12);
+  if (!matches.length) {
+    dd.innerHTML = '<div style="padding:12px 15px;font-size:12px;color:var(--text-muted)">No products found</div>';
+    dd.style.display = 'block'; return;
+  }
+  dd.innerHTML = matches.map(([code,p]) => {
+    const lvl = alertLevel(code,p.qty,p.original);
+    const dot = lvl==='critical'?'🔴':lvl==='warning'?'🟠':'🟢';
+    return `<div onclick="lookup('${code.replace(/'/g,"\\'")}');$('name-search-input').value='';$('name-dropdown').style.display='none'"
+      style="padding:10px 15px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px;transition:background .1s"
+      onmouseover="this.style.background='var(--surface3)'" onmouseout="this.style.background=''">
+      <div>
+        <div style="font-size:13px;font-weight:600">${dot} ${p.name}</div>
+        <div style="font-size:11px;color:var(--text-muted);font-family:var(--mono)">${code}</div>
+      </div>
+      <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:${p.qty<=0?'var(--red)':pct(p.qty,p.original)<=.3?'var(--yellow)':'var(--green)'};flex-shrink:0">${p.qty}</div>
+    </div>`;
+  }).join('');
+  dd.style.display = 'block';
+});
+
+// Close dropdown on outside click
+document.addEventListener('click', e => {
+  if (!e.target.closest('#name-search-input') && !e.target.closest('#name-dropdown'))
+    $('name-dropdown').style.display = 'none';
+});
+
+// ─── Deduct / Restock action ─────────────────────────────────────
+$('btn-action').addEventListener('click', () => {
+  if (!currentCode) return;
+  const p = products[currentCode];
+  const qty = parseInt($('qty-input').value, 10);
+  if (!qty || qty < 1) { toast('⚠️ Enter a valid quantity', 'error'); return; }
+
+  if (actionMode === 'deduct') {
+    if (qty > p.qty) { toast(`⚠️ Only ${p.qty} available`, 'error'); return; }
+    p.qty -= qty; totalOut += qty;
+    history.push({ type:'deduct', code:currentCode, name:p.name, qty, after:p.qty, time:Date.now() });
+    LS.set('ss_products', products); LS.set('ss_history', history);
+    toast(`✅ −${qty} deducted. ${p.qty} remaining.`, 'success');
+  } else {
+    p.qty += qty;
+    if (p.qty > p.original) p.original = p.qty;
+    history.push({ type:'restock', code:currentCode, name:p.name, qty, after:p.qty, time:Date.now() });
+    LS.set('ss_products', products); LS.set('ss_history', history);
+    toast(`✅ +${qty} restocked. Now ${p.qty} in stock.`, 'success');
+  }
+
+  const cl = stockCls(p.qty, p.original);
+  $('res-current').textContent = p.qty;
+  $('res-current').className = 'tile-val ' + cl;
+  $('tile-current').className = 'stock-tile ' + tileHL(p.qty, p.original);
+  $('res-original').textContent = p.original;
+  $('res-pct').textContent = Math.round(pct(p.qty,p.original)*100) + '%';
+  $('qty-input').max = actionMode==='deduct' ? p.qty : 999999;
+  updateAlertBanner(currentCode, p.qty, p.original);
+  updateThresholdPreview(currentCode);
+  renderScanList(); renderHistory(); renderStats(); renderTable($('search-input').value, $('cat-filter').value);
+  renderAlertsPage();
+});
+
+// ─── Add/Edit Modal ───────────────────────────────────────────────
+function openAdd() {
+  editingCode = null;
+  $('modal-title-text').textContent = 'Add Product';
+  $('m-barcode').value = ''; $('m-barcode').disabled = false;
+  $('m-name').value = ''; $('m-qty').value = ''; $('m-cat').value = '';
+  $('modal-product').classList.add('open');
+  setTimeout(() => $('m-barcode').focus(), 80);
+}
+function openEdit(code) {
+  editingCode = code; const p = products[code];
+  $('modal-title-text').textContent = 'Edit Product';
+  $('m-barcode').value = code; $('m-barcode').disabled = true;
+  $('m-name').value = p.name; $('m-qty').value = p.qty; $('m-cat').value = p.category||'';
+  $('modal-product').classList.add('open');
+  setTimeout(() => $('m-name').focus(), 80);
+}
+const closeModal = () => $('modal-product').classList.remove('open');
+$('btn-new').addEventListener('click', openAdd);
+$('modal-close').addEventListener('click', closeModal);
+$('modal-cancel').addEventListener('click', closeModal);
+$('modal-product').addEventListener('click', e => { if(e.target===$('modal-product')) closeModal(); });
+
+$('modal-save').addEventListener('click', () => {
+  const code = $('m-barcode').value.trim();
+  const name = $('m-name').value.trim();
+  const qty  = parseInt($('m-qty').value,10);
+  const cat  = $('m-cat').value.trim();
+  if (!code||!name||!qty||qty<1) { toast('⚠️ Fill all required fields', 'error'); return; }
+  if (editingCode) {
+    const orig = products[editingCode].original;
+    products[editingCode] = { name, qty, original:qty>orig?qty:orig, category:cat };
+    toast(`✅ "${name}" updated`, 'success');
+  } else {
+    if (products[code]) { toast('⚠️ Barcode already exists', 'error'); return; }
+    products[code] = { name, qty, original:qty, category:cat };
+    toast(`✅ "${name}" added`, 'success');
+  }
+  LS.set('ss_products', products);
+  closeModal(); renderTable($('search-input').value, $('cat-filter').value); renderScanList(); renderStats(); renderAlertsPage();
+});
+
+// ─── Delete Modal ─────────────────────────────────────────────────
+function openDelete(code) {
+  deletingCode = code; $('delete-name').textContent = products[code].name;
+  $('modal-delete').classList.add('open');
+}
+$('delete-cancel').addEventListener('click', () => $('modal-delete').classList.remove('open'));
+$('modal-delete').addEventListener('click', e => { if(e.target===$('modal-delete')) $('modal-delete').classList.remove('open'); });
+$('delete-confirm').addEventListener('click', () => {
+  if (!deletingCode) return;
+  const name = products[deletingCode].name;
+  delete products[deletingCode];
+  if (currentCode===deletingCode) { currentCode=null; $('result-card').style.display='none'; $('threshold-box').style.display='none'; }
+  LS.set('ss_products', products);
+  $('modal-delete').classList.remove('open');
+  renderTable($('search-input').value, $('cat-filter').value); renderScanList(); renderStats(); renderAlertsPage();
+  toast(`🗑 "${name}" deleted`, 'success'); deletingCode=null;
+});
+
+// ─── Search + Category filter ─────────────────────────────────────
+$('search-input').addEventListener('input', e => renderTable(e.target.value, $('cat-filter').value));
+$('cat-filter').addEventListener('change', e => renderTable($('search-input').value, e.target.value));
+
+// ─── Nav ──────────────────────────────────────────────────────────
+function navTo(page) {
+  document.querySelectorAll('.nav-btn').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(x=>x.classList.remove('active'));
+  document.querySelector(`.nav-btn[data-page="${page}"]`).classList.add('active');
+  $('page-'+page).classList.add('active');
+  if (page==='products') renderTable($('search-input').value, $('cat-filter').value);
+  if (page==='alerts') renderAlertsPage();
+}
+document.querySelectorAll('.nav-btn').forEach(b => b.addEventListener('click', () => navTo(b.dataset.page)));
+
+// ─── Sidebar tabs ──────────────────────────────────────────────────
+function activeStab(name) {
+  document.querySelectorAll('.stab').forEach(t => t.classList.toggle('active', t.dataset.stab===name));
+  document.querySelectorAll('.stab-pane').forEach(p => p.classList.toggle('active', p.id==='stab-'+name));
+}
+document.querySelectorAll('.stab').forEach(t => t.addEventListener('click', () => activeStab(t.dataset.stab)));
+
+// ─── Export ────────────────────────────────────────────────────────
+$('btn-export').addEventListener('click', () => {
+  const data = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    products,
+    history,
+    thresholds
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type:'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const date = new Date().toISOString().slice(0,10);
+  a.href     = url;
+  a.download = `stockscan-backup-${date}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('✅ Data exported successfully', 'success');
+});
+
+// ─── Import ────────────────────────────────────────────────────────
+$('import-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!data.products) throw new Error('Invalid file');
+      const count = Object.keys(data.products).length;
+      if (!confirm(`Import ${count} products from "${file.name}"?\n\nThis will REPLACE your current data.`)) {
+        e.target.value = ''; return;
+      }
+      products    = data.products    || {};
+      history     = data.history     || [];
+      thresholds  = data.thresholds  || {};
+      totalOut    = history.reduce((s,h) => s + (h.type!=='restock'?h.qty:0), 0);
+      LS.set('ss_products',   products);
+      LS.set('ss_history',    history);
+      LS.set('ss_thresholds', thresholds);
+      currentCode = null;
+      $('result-card').style.display = 'none';
+      $('threshold-box').style.display = 'none';
+      renderScanList(); renderHistory(); renderStats();
+      renderTable($('search-input').value, $('cat-filter').value);
+      renderAlertsPage();
+      toast(`✅ Imported ${count} products successfully`, 'success');
+    } catch {
+      toast('❌ Invalid file — could not import', 'error');
+    }
+    e.target.value = '';
+  };
+  reader.readAsText(file);
+});
+
+
+// ─── Pre-load inventory data ───────────────────────────────────────
+(function() {
+  const existing = localStorage.getItem('ss_products');
+  if (!existing || Object.keys(JSON.parse(existing)).length === 0) {
+    const seed = {"M8301-64100": {"name": "OpenLAB CDS", "qty": 1, "original": 1, "category": "GC Spare Parts — GC1"}, "M8301-64000": {"name": "OpenLAB CDS", "qty": 1, "original": 1, "category": "GC Spare Parts — GC6"}, "G4600-64400": {"name": "GC and GCMS", "qty": 1, "original": 1, "category": "GC Spare Parts — GC1"}, "M8400-6001": {"name": "OpenLAB CDS Inst. Driver", "qty": 1, "original": 1, "category": "GC Spare Parts — GC1"}, "G1532-60590": {"name": "TCD Ship Kit", "qty": 2, "original": 2, "category": "GC Spare Parts — GC1"}, "G3440-60333": {"name": "SST Tube 1/16", "qty": 3, "original": 3, "category": "GC Spare Parts — GC2"}, "RDT-1020": {"name": "Split Vent Trap", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "5080-8750": {"name": "Fittings 1/8 Brass 20/PK", "qty": 1, "original": 1, "category": "GC Spare Parts — GC2"}, "8710-1709": {"name": "Mastercool Mini Tube Cut", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "0100-2144": {"name": "1/8 Brass Ball Valve", "qty": 4, "original": 4, "category": "GC Spare Parts — GC2"}, "5180-4121": {"name": "Cap 1/8 6/PK", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "ORING-A32785": {"name": "O-rings A32785", "qty": 7, "original": 7, "category": "GC Spare Parts — GC2"}, "5180-4160": {"name": "Tee 1/8 Brass Union 2/PK", "qty": 1, "original": 1, "category": "GC Spare Parts — GC2"}, "5180-4131": {"name": "Reducer Union 1/4x1/8 Brass", "qty": 3, "original": 3, "category": "GC Spare Parts — GC2"}, "8710-0911": {"name": "SW3 Wrench", "qty": 5, "original": 5, "category": "GC Spare Parts — GC2"}, "5066-1110": {"name": "Velcro for Gasclean Kit", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "SS-200-1.2": {"name": "Saog Lock Moleconnector", "qty": 3, "original": 3, "category": "GC Spare Parts — GC2"}, "8121-0940": {"name": "LAN Cable", "qty": 1, "original": 1, "category": "GC Spare Parts — GC3"}, "0100-1329": {"name": "Ferrule 1/16 Vespel", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "5181-3344": {"name": "O-rings 6 per bag", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "G3430-80062": {"name": "30 sccm H2 Frit", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "G3430-80063": {"name": "3.3 sccm H2 Frit", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "G3430-80061": {"name": "Aux Frit 400 sccm Air", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "G3430-20011": {"name": "Aux Frit Case Zero Restriction", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "0100-1526": {"name": "Brass 1/8 Plug", "qty": 4, "original": 4, "category": "GC Spare Parts — GC2"}, "0100-0090": {"name": "1/8 Union Tee Brass Swagelok", "qty": 4, "original": 4, "category": "GC Spare Parts — GC2"}, "G3470-60550": {"name": "Aux Tubing Block Assembly", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "G3430-60550": {"name": "Tubing Block Assembly", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "5181-7481": {"name": "1/8 Nut & Ferrule Set Brass", "qty": 4, "original": 4, "category": "GC Spare Parts — GC2"}, "G1531-60640": {"name": "FID Packed Ship Kit", "qty": 3, "original": 3, "category": "GC Spare Parts — GC2"}, "G3440-80153": {"name": "Regulator Model 262AA", "qty": 1, "original": 1, "category": "GC Spare Parts — GC2"}, "0100-1489": {"name": "1/8 inch Ferrule Set Brass", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "0100-0058": {"name": "Brass Nut 1/8", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "G1530-20820": {"name": "Tubing Long Elbow 1/8in SS", "qty": 1, "original": 1, "category": "GC Spare Parts — GC2"}, "19091Z-236": {"name": "HP-1 Column", "qty": 1, "original": 1, "category": "GC Spare Parts — GC3"}, "CP17972": {"name": "Gas Clean Filter HydroCarbon", "qty": 1, "original": 1, "category": "GC Spare Parts — GC3"}, "CP8917": {"name": "VF-1ms Column", "qty": 1, "original": 1, "category": "GC Spare Parts — GC3"}, "128-0122E": {"name": "DB-1MS Column", "qty": 1, "original": 1, "category": "GC Spare Parts — GC3"}, "19091J-413": {"name": "HP-5 Column", "qty": 2, "original": 2, "category": "GC Spare Parts — GC3"}, "5182-0862": {"name": "Snap Crimp Vial Cap", "qty": 1, "original": 1, "category": "GC Spare Parts — GC2"}, "5188-5372": {"name": "FID MDL Sample Kit", "qty": 4, "original": 4, "category": "GC Spare Parts — GC4"}, "G4513-60800": {"name": "Ship Kit Injector", "qty": 1, "original": 1, "category": "GC Spare Parts — GC4"}, "G4513-68001": {"name": "Spot Vial Kit", "qty": 1, "original": 1, "category": "GC Spare Parts — GC4"}, "8710-2140": {"name": "Driver T-10 Torx Key", "qty": 1, "original": 1, "category": "GC Spare Parts — GC4"}, "07673-4010": {"name": "Diffusion Caps 4ML Vials", "qty": 2, "original": 2, "category": "GC Spare Parts — GC4"}, "5181-3354": {"name": "Syringe 10 UL", "qty": 1, "original": 1, "category": "GC Spare Parts — GC4"}, "G3430-60586": {"name": "FID Capillary/SSL or MMI", "qty": 2, "original": 2, "category": "GC Spare Parts — GC6"}, "19091P-S12": {"name": "HP-AL/S Column", "qty": 1, "original": 1, "category": "GC Spare Parts — GC5"}, "5080-8853": {"name": "Ferrule 0.5 Graphit 0.32", "qty": 1, "original": 1, "category": "GC Spare Parts — GC2"}, "M8301AA": {"name": "Open Lab CDS ChemStation", "qty": 1, "original": 1, "category": "GC Spare Parts — GC6"}, "P54280": {"name": "Dipropyl Sulfide 25G", "qty": 1, "original": 1, "category": "Chemicals — CHEM1"}, "238317": {"name": "Ethyl Methyl Sulfide 25G", "qty": 1, "original": 1, "category": "Chemicals — CHEM1"}, "471836": {"name": "1-Octanethiol 25ML", "qty": 1, "original": 1, "category": "Chemicals — CHEM1"}, "P54345": {"name": "2-Propylthiophene 1G", "qty": 2, "original": 2, "category": "Chemicals — CHEM1"}, "T31801": {"name": "Thiophene 100G", "qty": 1, "original": 1, "category": "Chemicals — CHEM1"}, "107247": {"name": "Diethyl Sulfide 100ML", "qty": 1, "original": 1, "category": "Chemicals — CHEM1"}, "620003": {"name": "Aquamax KF Reagent C 5ML", "qty": 8, "original": 8, "category": "Chemicals — CHEM2"}, "34868": {"name": "HYDRANAL Coulomat Oil 500ML", "qty": 1, "original": 1, "category": "Chemicals — CHEM2"}, "620006": {"name": "Aquamax KF Reagent A 100ML", "qty": 1, "original": 1, "category": "Chemicals — CHEM2"}, "61002": {"name": "Cou-Lo Formula C 5ML", "qty": 6, "original": 6, "category": "Chemicals — CHEM2"}, "32222": {"name": "Dichloromethane 2.5L", "qty": 2, "original": 2, "category": "Chemicals — CHEM4"}, "246654": {"name": "n-Heptane 2.5L", "qty": 1, "original": 1, "category": "Chemicals — CHEM5"}, "S5150": {"name": "Sodium Chloride 1KG", "qty": 1, "original": 1, "category": "Chemicals — CHEM6"}, "P5958": {"name": "Potassium Hydroxide 5KG", "qty": 1, "original": 1, "category": "Chemicals — CHEM6"}, "10316120": {"name": "EDTA 1KG", "qty": 1, "original": 1, "category": "Chemicals — CHEM6"}, "10314687": {"name": "Sodium Acetate 1KG", "qty": 1, "original": 1, "category": "Chemicals — CHEM6"}, "320099": {"name": "Acetic Acid 1KG", "qty": 1, "original": 1, "category": "Chemicals — CHEM6"}, "324558": {"name": "Ethylene Glycol 2.5L", "qty": 1, "original": 1, "category": "Chemicals — CHEM7"}, "360066": {"name": "2,2,4-Trimethylpentane 2.5L", "qty": 4, "original": 4, "category": "Chemicals — CHEM8"}, "20003L25": {"name": "Acetone 2.5L", "qty": 10, "original": 10, "category": "Chemicals — CHEM9"}, "UN1219": {"name": "Propanol-2 2.5L", "qty": 5, "original": 5, "category": "Chemicals — CHEM10"}, "330361": {"name": "Sodium Carbonate Anhydrous 1KG", "qty": 1, "original": 1, "category": "Chemicals — CHEM12"}, "SODAASH": {"name": "Soda Ash", "qty": 1, "original": 1, "category": "Chemicals — CHEM12"}, "34860": {"name": "Methanol 2.5L", "qty": 3, "original": 3, "category": "Chemicals — CHEM13"}, "457116": {"name": "Decane 2.5L", "qty": 1, "original": 1, "category": "Chemicals — CHEM13"}, "SILICONE-OIL": {"name": "Dow Corning Fluid Silicone Oil", "qty": 1, "original": 1, "category": "Chemicals — CHEM14"}, "A2B2": {"name": "Shell Helix HX5 20W-50 Oil 1L", "qty": 1, "original": 1, "category": "Chemicals — CHEM15"}, "712085": {"name": "Leybonol Vacuum Pump Oil 5L", "qty": 1, "original": 1, "category": "Chemicals — CHEM15"}, "WD40": {"name": "WD-40 400ML", "qty": 3, "original": 3, "category": "Chemicals — CHEM15"}, "R36389": {"name": "Decon Neutracon 5L", "qty": 1, "original": 1, "category": "Chemicals — CHEM15"}, "NIST211D": {"name": "Toluene 2.5L", "qty": 1, "original": 1, "category": "Chemicals — CHEM16"}, "M84402": {"name": "3-Methylthiophene 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "357790": {"name": "Thianaphthene 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "E26223": {"name": "Diethyl Disulfide 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "M84208": {"name": "2-Methylthiophene", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "358746": {"name": "Tetratetracosane 1G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "P54345-F": {"name": "2-Propylthiophene Fridge 1G", "qty": 3, "original": 3, "category": "Chemicals — Fridge1"}, "N31400": {"name": "1-Nonanethiol 5G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "52913": {"name": "Hexatetracontane 250MG", "qty": 2, "original": 2, "category": "Chemicals — Fridge1"}, "88152": {"name": "Tetratriacontane 250MG", "qty": 2, "original": 2, "category": "Chemicals — Fridge1"}, "74892": {"name": "Octatetracontane 100MG", "qty": 2, "original": 2, "category": "Chemicals — Fridge1"}, "87086": {"name": "Tetracontane 250MG", "qty": 2, "original": 2, "category": "Chemicals — Fridge1"}, "44250": {"name": "Dotetracontane 100MG", "qty": 2, "original": 2, "category": "Chemicals — Fridge1"}, "76491": {"name": "Pentacontane 250MG", "qty": 2, "original": 2, "category": "Chemicals — Fridge1"}, "294012": {"name": "Tert-Butyl Methyl Sulfide", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "CDS001487": {"name": "2-N-Butylthiophene 250MG", "qty": 5, "original": 5, "category": "Chemicals — Fridge1"}, "52930": {"name": "1-Hexene 5ML", "qty": 9, "original": 9, "category": "Chemicals — Fridge1"}, "28001": {"name": "n-Decane 100ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "219274": {"name": "Eicosane 100G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "T8752": {"name": "Tetracosane 1G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "241687": {"name": "Hexacosane 1G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "263842": {"name": "Triacontane 1G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "74893": {"name": "Octatriacontane", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "128503": {"name": "Heptadecane 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "504": {"name": "Octacosane 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "H12552": {"name": "Hexatriacontane 5MG", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "D223107": {"name": "Dotriacontane 5G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "134457": {"name": "Docosane 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "652": {"name": "Octadecane 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "VL9": {"name": "VL9 Reference Crude Oil", "qty": 3, "original": 3, "category": "Chemicals — Fridge1"}, "VL8": {"name": "VL8 Reference Crude Oil", "qty": 3, "original": 3, "category": "Chemicals — Fridge1"}, "48873": {"name": "ASTM D2887 Reference Gas Oil", "qty": 29, "original": 29, "category": "Chemicals — Fridge1"}, "T57401": {"name": "Tridecane 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "D221104": {"name": "Dodecane 100ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "296988": {"name": "Octane 100ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "P3406": {"name": "Pentadecane 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "U407": {"name": "Undecane 100ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "139386": {"name": "Hexane 100ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "N29406": {"name": "Nonane 100ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "H6703": {"name": "Hexadecane 500ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "H2198": {"name": "Heptane 500ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "D901": {"name": "Decane 500ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "32032-3": {"name": "1-Hexene 97% 1L", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "1030770": {"name": "Xylenes 2.5L", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "34294": {"name": "Silver Nitrate 1L", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "32222-F": {"name": "Dichloromethane Fridge 2.5L", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "16446": {"name": "Xylenes 1L", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "34855": {"name": "Cyclohexane 1L", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "172456": {"name": "Tetradecane 500G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "NONE-CDS": {"name": "CDs", "qty": 2, "original": 2, "category": "Storage — A1"}, "PA-923": {"name": "LED Torch", "qty": 1, "original": 1, "category": "Storage — A1"}, "16475090116": {"name": "Light Mr Torch", "qty": 1, "original": 1, "category": "Storage — A1"}, "P392911": {"name": "Coated Silicone Septa", "qty": 28, "original": 28, "category": "Storage — A2"}, "KEL-PAPER": {"name": "Kel Fisher Paper Roll", "qty": 2, "original": 2, "category": "Storage — A2"}, "40644": {"name": "Precleaned Copper Tubing 1/4 OD", "qty": 2, "original": 2, "category": "Storage — A2"}, "48423": {"name": "Precleaned Copper Tubing 1/8 OD", "qty": 1, "original": 1, "category": "Storage — A2"}, "GLASS-250ML": {"name": "Glass Bottles 250 ML", "qty": 50, "original": 50, "category": "Storage — A3"}, "5185882": {"name": "Detector Tubes Sulphide 4HT", "qty": 16, "original": 16, "category": "Storage — A4"}, "5185881": {"name": "Detector Tubes Sulphide 4HP", "qty": 10, "original": 10, "category": "Storage — A4"}, "DOT-3E1800": {"name": "Gas Balloon Vessel", "qty": 26, "original": 26, "category": "Storage — AB5"}, "PW100PH150BAR": {"name": "Gas Balloon Vessel 0.285L", "qty": 2, "original": 2, "category": "Storage — AB5"}, "102362": {"name": "Water Purification", "qty": 2, "original": 2, "category": "Storage — AB5"}, "TW-43": {"name": "Liquid Withdrawal Device", "qty": 1, "original": 1, "category": "Storage — AB6"}, "M4042539": {"name": "Fume Cupboard Main Filter", "qty": 0, "original": 0, "category": "Storage — AB6"}, "SR1295": {"name": "Fume Cupboard Filter Sheets", "qty": 22, "original": 22, "category": "Storage — AB6"}, "65-2615RK": {"name": "H2S Sensor", "qty": 3, "original": 3, "category": "Storage — B1"}, "863B01": {"name": "Fire Blanket Folding", "qty": 1, "original": 1, "category": "Storage — B2"}, "GOGLE": {"name": "Gogle", "qty": 1, "original": 1, "category": "Storage — B2"}, "SAFTEY-GLASS": {"name": "Safety Glass", "qty": 8, "original": 8, "category": "Storage — B2"}, "BLACK-SAFTEY-GLASS": {"name": "Black Safety Glass", "qty": 8, "original": 8, "category": "Storage — B2"}, "FIRST-AID": {"name": "First Aid Kit", "qty": 2, "original": 2, "category": "Storage — B2"}, "MASK": {"name": "Mask", "qty": 7, "original": 7, "category": "Storage — B2"}, "EYE-WASH": {"name": "Eye Wash", "qty": 2, "original": 2, "category": "Storage — B2"}, "GLASS-100ML": {"name": "Glass Bottles 100 ML", "qty": 131, "original": 131, "category": "Storage — B3"}, "CUP-200ML": {"name": "200 ML Cup Bottles", "qty": 95, "original": 95, "category": "Storage — B3"}, "EN374": {"name": "Gloves 92-600", "qty": 9, "original": 9, "category": "Storage — B4"}, "TEMP-CTRL": {"name": "Temp Control Box", "qty": 4, "original": 4, "category": "Storage — C1"}, "WS-5023S": {"name": "Waterproof Socket", "qty": 24, "original": 24, "category": "Storage — C2"}, "SP02": {"name": "Safety Plug", "qty": 20, "original": 20, "category": "Storage — C2"}, "GLASS-500ML": {"name": "500 ML Glass Bottle", "qty": 10, "original": 10, "category": "Storage — C3"}, "GLASS-1L": {"name": "1 L Glass Bottle", "qty": 13, "original": 13, "category": "Storage — C3"}, "SAFETY-BOOT": {"name": "Safety Boot Red Wing", "qty": 11, "original": 11, "category": "Storage — CD6"}, "632036USD3": {"name": "Syring Unolok 3ML", "qty": 5, "original": 5, "category": "Storage — D1"}, "REF301750": {"name": "Needles 1.1 MM X 50 MM", "qty": 3, "original": 3, "category": "Storage — D2"}, "PVT-CABLE": {"name": "PVT Cell Cable Expro", "qty": 9, "original": 9, "category": "Storage — D4"}, "430025SA2": {"name": "Syring Dispo Van 2ML", "qty": 6, "original": 6, "category": "Storage — E1"}, "HEM-375MCO": {"name": "Pressure Transducer", "qty": 2, "original": 2, "category": "Storage — E4"}, "MS15-200": {"name": "1/8 OD Reg Stem Straight Valve", "qty": 6, "original": 6, "category": "Storage — E4"}, "SSL20-STORE": {"name": "SSL20", "qty": 44, "original": 44, "category": "Storage — E4"}, "FERRULE-1/8": {"name": "Ferrule 1/8", "qty": 20, "original": 20, "category": "Storage — E4"}, "140001": {"name": "Vacuum Pump", "qty": 2, "original": 2, "category": "Storage — EF6"}, "GLASS-50ML": {"name": "Glass Bottle 50ML", "qty": 33, "original": 33, "category": "Storage — F3"}, "THERMAL-GLOVES": {"name": "Thermal Work Gloves", "qty": 1, "original": 1, "category": "Storage — F4"}, "RUBBER-GLOVES": {"name": "Rubber Gloves", "qty": 1, "original": 1, "category": "Storage — F4"}, "SUPER-OLYMPIA": {"name": "Super Olympia Dress", "qty": 4, "original": 4, "category": "Storage — F4"}, "TISSUE-BIG": {"name": "Tissue Big Size", "qty": 8, "original": 8, "category": "Storage — G1"}, "SILICONE-TUBE": {"name": "Silicone Tubing 2X6mm", "qty": 1, "original": 1, "category": "Storage — G4"}, "CK300": {"name": "SI Analytics", "qty": 1, "original": 1, "category": "Storage — GH6"}, "BREJ5433": {"name": "Breathing Apparatus", "qty": 1, "original": 1, "category": "Storage — GH6"}, "DP4700": {"name": "Electric Drill", "qty": 1, "original": 1, "category": "Storage — H1"}, "KR703": {"name": "Electric Drill Black & Decker", "qty": 1, "original": 1, "category": "Storage — H1"}, "DEWALT": {"name": "DeWalt Kit", "qty": 1, "original": 1, "category": "Storage — H1"}, "31738": {"name": "Graduated Cylinder 100 ML", "qty": 6, "original": 6, "category": "Storage — J1"}, "31748": {"name": "Graduated Cylinder 250 ML", "qty": 6, "original": 6, "category": "Storage — J1"}, "FE250/3": {"name": "250L Conical Flask", "qty": 5, "original": 5, "category": "Storage — J1"}, "GTF0301": {"name": "GC Filter GTF0301", "qty": 2, "original": 2, "category": "Storage — J2"}, "GTF0201": {"name": "GC Filter GTF0201", "qty": 2, "original": 2, "category": "Storage — J2"}, "22020": {"name": "GC Filter 22020", "qty": 4, "original": 4, "category": "Storage — J2"}, "23201": {"name": "Tedlar Sample Bag", "qty": 3, "original": 3, "category": "Storage — K1"}, "200020": {"name": "Dilvac Dewar Flask", "qty": 1, "original": 1, "category": "Storage — K1"}, "68024": {"name": "Straight 25 Pipe Cleaners", "qty": 2, "original": 2, "category": "Storage — K2"}, "G6600-60037": {"name": "Ceramic Tube Kit SCF DP Burner", "qty": 3, "original": 3, "category": "Storage — K3"}, "5680399": {"name": "Weller WHS 40", "qty": 1, "original": 1, "category": "Storage — K4"}, "1390000": {"name": "Vacuum System Tester Kit", "qty": 2, "original": 2, "category": "Storage — K4"}, "DMA-35N": {"name": "Density Meter", "qty": 1, "original": 1, "category": "Storage — K5"}, "27211": {"name": "15 ML Clear Vial Screw Top", "qty": 2, "original": 2, "category": "Storage — L1"}, "27210": {"name": "7 ML Clear Vial Screw Top", "qty": 5, "original": 5, "category": "Storage — L3"}, "27209": {"name": "4 ML Clear Vial Screw Top", "qty": 2, "original": 2, "category": "Storage — L5"}, "VAPS101": {"name": "1/4 Male NPT - 1/8 Female Autoclave Adaptor", "qty": 5, "original": 5, "category": "Lab Spare Parts — PVT Lab"}, "VAPS102": {"name": "HP male 3/8 - LP female 1/8 Autoclave adaptor", "qty": 7, "original": 7, "category": "Lab Spare Parts — PVT Lab"}, "VAPS103": {"name": "SLB cylinder fittings", "qty": 7, "original": 7, "category": "Lab Spare Parts — PVT Lab"}, "VAPS104": {"name": "1/4 Male NPT - 1/4 Female Autoclave Adaptor", "qty": 2, "original": 2, "category": "Lab Spare Parts — PVT Lab"}, "VAPS105": {"name": "HP male 3/8 - HP female 1/4 Autoclave adaptor", "qty": 1, "original": 1, "category": "Lab Spare Parts — PVT Lab"}, "VAPS106": {"name": "1/8 SS Autoclave sleeve", "qty": 100, "original": 100, "category": "Lab Spare Parts — PVT Lab"}, "VAPS107": {"name": "1/8 SS Autoclave glands", "qty": 100, "original": 100, "category": "Lab Spare Parts — PVT Lab"}, "VAPS108": {"name": "1/16 SS Autoclave sleeves", "qty": 66, "original": 66, "category": "Lab Spare Parts — PVT Lab"}, "VAPS109": {"name": "1/16 SS Autoclave glands", "qty": 15, "original": 15, "category": "Lab Spare Parts — PVT Lab"}, "VAPS110": {"name": "MP Autoclave Straight Valves", "qty": 5, "original": 5, "category": "Lab Spare Parts — PVT Lab"}, "VAPS111": {"name": "QC Autoclave Valve 1 inlet 1 outlet", "qty": 5, "original": 5, "category": "Lab Spare Parts — E4"}, "VAPS112": {"name": "Cell Charge Autoclave Valve", "qty": 5, "original": 5, "category": "Lab Spare Parts — PVT Lab"}, "VAPS113": {"name": "Transfer Pump 2 inlet 1 outlet", "qty": 1, "original": 1, "category": "Lab Spare Parts — PVT Lab"}, "VAPS114": {"name": "New Flash Unit Valve", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS115": {"name": "Capillary Unit Valve", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS116": {"name": "1/4 NPT Male - 1/8 Autoclave Male crossover", "qty": 1, "original": 1, "category": "Lab Spare Parts — PVT Lab"}, "VAPS117": {"name": "LP Autoclave female-female connector", "qty": 2, "original": 2, "category": "Lab Spare Parts — PVT Lab"}, "VAPS118": {"name": "1/8 Autoclave Tee capillary viscosity", "qty": 2, "original": 2, "category": "Lab Spare Parts — PVT Lab"}, "VAPS119": {"name": "1/8 Fluted Connector", "qty": 10, "original": 10, "category": "Lab Spare Parts — PVT Lab"}, "VAPS120": {"name": "SS Ferrule Set 1/16 Swagelok", "qty": 4, "original": 4, "category": "Lab Spare Parts — PVT Lab"}, "VAPS121": {"name": "SS Ferrule Set 1/8 Swagelok", "qty": 5, "original": 5, "category": "Lab Spare Parts — PVT Lab"}, "VAPS122": {"name": "SS Ferrule Set 1/4 Swagelok", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS123": {"name": "SS Swagelok Nut 1/4 OD", "qty": 20, "original": 20, "category": "Lab Spare Parts — PVT Lab"}, "VAPS124": {"name": "SS Swagelok Nut 1/8 OD", "qty": 30, "original": 30, "category": "Lab Spare Parts — PVT Lab"}, "VAPS125": {"name": "SS Swagelok Nut 1/16 OD", "qty": 10, "original": 10, "category": "Lab Spare Parts — PVT Lab"}, "VAPS126": {"name": "1/4 Swage Plug", "qty": 9, "original": 9, "category": "Lab Spare Parts"}, "VAPS127": {"name": "1/8 Swage Plug", "qty": 0, "original": 0, "category": "Lab Spare Parts"}, "VAPS128": {"name": "1/8 Swage Cap", "qty": 0, "original": 0, "category": "Lab Spare Parts"}, "VAPS129": {"name": "1/4 Swage Cap", "qty": 0, "original": 0, "category": "Lab Spare Parts"}, "VAPS130": {"name": "1/16 Swage Cap", "qty": 0, "original": 0, "category": "Lab Spare Parts"}, "VAPS131": {"name": "1/4 NPT Female Blank", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS132": {"name": "1/4 NPT Blank PDS Bottle", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS133": {"name": "1/4 NPT Blank Luxfer Bottle", "qty": 2, "original": 2, "category": "Lab Spare Parts — PVT Lab"}, "VAPS135": {"name": "SS 1/4 NPT Male - 1/4 Swage Tube Adaptor", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS136": {"name": "SS Swagelok 1/8 Tube Reducer", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS137": {"name": "SS Swagelok 1/4 Tube Reducer", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS138": {"name": "1/8 SS Swagelok Port Connector", "qty": 3, "original": 3, "category": "Lab Spare Parts — PVT Lab"}, "VAPS142": {"name": "1/16 SS Swagelok Union", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS143": {"name": "1/8 SS Swagelok Union", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS144": {"name": "1/4 SS Swagelok Union", "qty": 4, "original": 4, "category": "Lab Spare Parts"}, "VAPS145": {"name": "1/16 SS Swagelok Tee", "qty": 4, "original": 4, "category": "Lab Spare Parts"}, "VAPS146": {"name": "1/8 SS Swagelok Tee", "qty": 0, "original": 0, "category": "Lab Spare Parts"}, "VAPS147": {"name": "1/4 SS Swagelok Tee", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS148": {"name": "1/8 SS Swagelok Cross", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS149": {"name": "1/4 - 1/16 SS Swagelok Reducer", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS150": {"name": "1/4 - 1/8 SS Swagelok Reducer", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS204": {"name": "O-ring FR58/90 ID 18.64MM", "qty": 118, "original": 118, "category": "Lab Spare Parts — F2"}, "VAPS205": {"name": "O-ring AF69/90 ID 18.64MM H2S", "qty": 10, "original": 10, "category": "Lab Spare Parts — F2"}, "VAPS206": {"name": "Fluolion Backup Rings OD 25.4MM", "qty": 280, "original": 280, "category": "Lab Spare Parts — F2"}, "VAPS207": {"name": "O-ring FR58/90 ID 9.25MM", "qty": 354, "original": 354, "category": "Lab Spare Parts — F2"}, "VAPS208": {"name": "O-ring AF69/90 ID 7.65MM H2S", "qty": 501, "original": 501, "category": "Lab Spare Parts — F2"}, "VAPS209": {"name": "Flourocarbon FR58/90 ID 7.65MM", "qty": 358, "original": 358, "category": "Lab Spare Parts — F2"}, "VAPS210": {"name": "Isco Teledyne Shear Pins", "qty": 6, "original": 6, "category": "Lab Spare Parts"}, "VAPS211": {"name": "RS Components Cotter Pins", "qty": 50, "original": 50, "category": "Lab Spare Parts"}, "VAPS212": {"name": "Proserv Circlips", "qty": 9, "original": 9, "category": "Lab Spare Parts"}, "VAPS214": {"name": "Kulite Pressure Transducer", "qty": 2, "original": 2, "category": "Lab Spare Parts — E4"}, "VAPS217": {"name": "Pump Fuse 250V 1AMP", "qty": 6, "original": 6, "category": "Lab Spare Parts"}, "VAPS225": {"name": "Piston Glide Rings Proserv", "qty": 10, "original": 10, "category": "Lab Spare Parts"}, "VAPS227": {"name": "Isco Teledyne Pump Head Seal", "qty": 4, "original": 4, "category": "Lab Spare Parts"}, "VAPS228": {"name": "Isco Teledyne Pump Piston Seal", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS229": {"name": "Cryogenic Distillation Flask", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS230": {"name": "Flash Test Conical Flask 125ml", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS231": {"name": "Condensate Trap with Side Arm", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS232": {"name": "Sep Test Flasks 10 ml", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS233": {"name": "Lubriplate Grease", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS235": {"name": "Model SA Pressure Transducer Honeywell", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS236": {"name": "ESH Trace Heating 50w", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS237": {"name": "ESH Trace Heating TempCon ST64 Type1", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS238": {"name": "ESH Trace Heating TempCon ST64 Type2", "qty": 8, "original": 8, "category": "Lab Spare Parts"}, "VAPS239": {"name": "ESH Heating Jacket 85x300mm", "qty": 4, "original": 4, "category": "Lab Spare Parts"}, "VAPS240": {"name": "ESH Heating Jacket 230x700mm", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS241": {"name": "ESH Heating Jacket 50x700mm", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS242": {"name": "Gastec Pump Set GV100", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS243": {"name": "Gastec Tubes 1-40% 4HT", "qty": 1, "original": 1, "category": "Lab Spare Parts — A4"}, "VAPS244": {"name": "Gastec Tubes 0.25-20% 4HP", "qty": 0, "original": 0, "category": "Lab Spare Parts — A4"}, "VAPS245": {"name": "Gastec Tubes 0.05-4% 4HH", "qty": 1, "original": 1, "category": "Lab Spare Parts — A4"}, "VAPS265": {"name": "Oerlikon Leybold Vacuum Pump", "qty": 3, "original": 3, "category": "Lab Spare Parts — EF6"}, "VAPS267": {"name": "Exhaust Filter AF8 Vacuum Pump", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS268": {"name": "Centering Ring DN16KF", "qty": 4, "original": 4, "category": "Lab Spare Parts"}, "VAPS269": {"name": "Clamping Ring DN 10/16 KF", "qty": 8, "original": 8, "category": "Lab Spare Parts"}, "VAPS270": {"name": "Elbow DN 16 KF", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS271": {"name": "Flange with Hose Nozzle DN16 KF", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS272": {"name": "Dirt Trap", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS273": {"name": "Filters for Vacuum Pump", "qty": 9, "original": 9, "category": "Lab Spare Parts"}, "VAPS274": {"name": "Vacuum Pump Oil 5L", "qty": 5, "original": 5, "category": "Lab Spare Parts"}, "VAPS277": {"name": "Pack Injection Septa", "qty": 9, "original": 9, "category": "Lab Spare Parts"}, "VAPS278": {"name": "Paper Roll Single", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS279": {"name": "Hydranal Coulomat CG 50ml", "qty": 5, "original": 5, "category": "Lab Spare Parts"}, "VAPS280": {"name": "Hydranal Coulomat Oil 100ml", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS281": {"name": "Line Cutter 1/8 to 7/8 OD", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS282": {"name": "Line Deburrer", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS283": {"name": "Pro 1/4 Air Blow Gun 12bar", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS285": {"name": "Snoop Leak Detector Swagelok", "qty": 5, "original": 5, "category": "Lab Spare Parts"}, "VAPS286": {"name": "Flash Units O-rings", "qty": 10, "original": 10, "category": "Lab Spare Parts"}, "VAPS287": {"name": "Dewar Cryogenic Jar 150ml", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS288": {"name": "Dewar Cryogenic Jar 350ml", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS289": {"name": "Dewar Cryogenic SS Vessel 1000ml", "qty": 4, "original": 4, "category": "Lab Spare Parts"}, "VAPS290": {"name": "Hoke Cryo Gas Receiver", "qty": 8, "original": 8, "category": "Lab Spare Parts"}, "VAPS401": {"name": "Spectrol Regulator for CG", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS402": {"name": "Spectrol Regulator for VG", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS404": {"name": "Agilent Silica Gel Refill", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS405": {"name": "Agilent Hydrocarbon Trap Refill", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS406": {"name": "Triple Bench Top Filter", "qty": 9, "original": 9, "category": "Lab Spare Parts"}, "VAPS407": {"name": "Combi Fuel Bench Top Filter", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS409": {"name": "Agilent Moisture Trap 400cc", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS411": {"name": "Gas GC Capillary Column HP-1", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS412": {"name": "Agilent DB-1MS Column", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS418": {"name": "Agilent O-ring Liner for GC", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS419": {"name": "O-ring for Liner 10/pk", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS420": {"name": "Crawford Column Cutter Pack 4", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS421": {"name": "Focus Liners Pkt/5", "qty": 6, "original": 6, "category": "Lab Spare Parts"}, "VAPS422": {"name": "Jet for Liquid GC 43mm", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS424": {"name": "Ferrule 0.5 Graphite Capillary", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS426": {"name": "Agilent Inlet Septa 11mm Pack 50", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS427": {"name": "Column Fitting", "qty": 6, "original": 6, "category": "Lab Spare Parts"}, "VAPS428": {"name": "Crawford Blanking Plug", "qty": 5, "original": 5, "category": "Lab Spare Parts"}, "VAPS430": {"name": "Agilent Ignitor Glow Plug", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS431": {"name": "Agilent Washers for Golden Seal", "qty": 24, "original": 24, "category": "Lab Spare Parts"}, "VAPS432": {"name": "Agilent Gold Plated Seal with Cross", "qty": 5, "original": 5, "category": "Lab Spare Parts"}, "VAPS433": {"name": "Agilent Reducing Nut for Inlet", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS438": {"name": "FID/TCD Heater/Sensor Assembly", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS439": {"name": "Tubing Block Assembly", "qty": 1, "original": 1, "category": "Lab Spare Parts"}};
+    localStorage.setItem('ss_products', JSON.stringify(seed));
+  }
+})();
+
+// ─── Service Worker ────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+
+// ─── Init ──────────────────────────────────────────────────────────
+renderScanList(); renderHistory(); renderStats(); renderTable(); renderAlertsPage();
+</script>
+</body>
+</html>
