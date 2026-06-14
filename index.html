@@ -11,6 +11,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="StockScan">
 <link rel="manifest" href="manifest.json">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
@@ -452,15 +453,109 @@ const LS = {
   set: (k,v) => localStorage.setItem(k, JSON.stringify(v))
 };
 
+// ─── Supabase Setup ──────────────────────────────────────────────
+const SUPABASE_URL  = 'https://rsxyojtlqcqqadoferds.supabase.co';
+const SUPABASE_KEY  = 'sb_publishable_apqkbcp67rI7DxQHvyEGzA_HhZVQiQ6';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
 // ─── State ─────────────────────────────────────────────────────
-let products     = LS.get('ss_products')    || {};
-let history      = LS.get('ss_history')     || [];
-let thresholds   = LS.get('ss_thresholds')  || {}; // per-product thresholds
-let totalOut     = history.reduce((s,h) => s + (h.type!=='restock'?h.qty:0), 0);
+let products     = {};
+let history       = [];
+let thresholds   = {}; // per-product thresholds
+let totalOut     = 0;
 let currentCode  = null;
 let editingCode  = null;
 let deletingCode = null;
 let actionMode   = 'deduct'; // 'deduct' | 'restock'
+
+// ─── Row <-> App object mappers ─────────────────────────────────
+function rowToProduct(r) {
+  return {
+    name: r.name, qty: r.qty, original: r.original, category: r.category || ''
+  };
+}
+function rowToThreshold(r) {
+  const t = {};
+  if (r.qty_warn != null) t.qtyWarn = r.qty_warn;
+  if (r.qty_crit != null) t.qtyCrit = r.qty_crit;
+  t.pctWarn = r.pct_warn != null ? Number(r.pct_warn) : 30;
+  t.pctCrit = r.pct_crit != null ? Number(r.pct_crit) : 10;
+  return t;
+}
+function rowToHistory(r) {
+  return { type: r.type, code: r.code, name: r.name, qty: r.qty, after: r.after, time: new Date(r.created_at).getTime() };
+}
+
+// ─── Load all data from Supabase ────────────────────────────────
+async function loadAllData() {
+  const { data: prodRows, error: e1 } = await sb.from('products').select('*');
+  if (e1) { toast('❌ Failed to load products: ' + e1.message, 'error'); return; }
+
+  products = {}; thresholds = {};
+  for (const r of prodRows) {
+    products[r.code] = rowToProduct(r);
+    const th = rowToThreshold(r);
+    if (r.qty_warn != null || r.qty_crit != null || r.pct_warn != null || r.pct_crit != null) {
+      thresholds[r.code] = th;
+    }
+  }
+
+  const { data: histRows, error: e2 } = await sb.from('history')
+    .select('*').order('created_at', { ascending: true }).limit(200);
+  if (!e2) {
+    history = histRows.map(rowToHistory);
+    totalOut = history.reduce((s,h) => s + (h.type!=='restock'?h.qty:0), 0);
+  }
+
+  renderScanList(); renderHistory(); renderStats();
+  renderTable($('search-input').value, $('cat-filter').value);
+  renderAlertsPage();
+}
+
+// ─── Realtime sync ───────────────────────────────────────────────
+function setupRealtime() {
+  sb.channel('products-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, payload => {
+      const r = payload.new && Object.keys(payload.new).length ? payload.new : payload.old;
+      if (!r) return;
+      if (payload.eventType === 'DELETE') {
+        delete products[r.code]; delete thresholds[r.code];
+      } else {
+        products[r.code] = rowToProduct(r);
+        const th = rowToThreshold(r);
+        if (r.qty_warn != null || r.qty_crit != null || r.pct_warn != null || r.pct_crit != null) {
+          thresholds[r.code] = th;
+        } else {
+          delete thresholds[r.code];
+        }
+      }
+      renderScanList(); renderStats();
+      renderTable($('search-input').value, $('cat-filter').value);
+      renderAlertsPage();
+      if (currentCode === r.code) {
+        if (payload.eventType === 'DELETE') {
+          currentCode = null; $('result-card').style.display='none'; $('threshold-box').style.display='none';
+        } else {
+          const p = products[r.code];
+          const cl = stockCls(p.qty, p.original);
+          $('res-current').textContent = p.qty;
+          $('res-current').className = 'tile-val ' + cl;
+          $('tile-current').className = 'stock-tile ' + tileHL(p.qty, p.original);
+          $('res-original').textContent = p.original;
+          $('res-pct').textContent = Math.round(pct(p.qty,p.original)*100) + '%';
+          $('qty-input').max = actionMode==='deduct' ? p.qty : 999999;
+          updateAlertBanner(r.code, p.qty, p.original);
+        }
+      }
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'history' }, payload => {
+      const r = payload.new;
+      history.push(rowToHistory(r));
+      if (r.type !== 'restock') totalOut += r.qty;
+      renderHistory(); renderStats();
+    })
+    .subscribe();
+}
 
 // ─── Helpers ────────────────────────────────────────────────────
 const pct = (q,o) => o > 0 ? q/o : 0;
@@ -575,15 +670,20 @@ function updateThresholdPreview(code) {
   $(id).addEventListener('input', () => { if (currentCode) updateThresholdPreview(currentCode); });
 });
 
-function saveThresholds() {
+async function saveThresholds() {
   if (!currentCode) return;
-  thresholds[currentCode] = {
+  const newT = {
     qtyWarn: parseInt($('thresh-qty-warn').value)||null,
     qtyCrit: parseInt($('thresh-qty-crit').value)||null,
     pctWarn: parseFloat($('thresh-pct-warn').value)||30,
     pctCrit: parseFloat($('thresh-pct-crit').value)||10
   };
-  LS.set('ss_thresholds', thresholds);
+  thresholds[currentCode] = newT;
+  const { error } = await sb.from('products').update({
+    qty_warn: newT.qtyWarn, qty_crit: newT.qtyCrit,
+    pct_warn: newT.pctWarn, pct_crit: newT.pctCrit
+  }).eq('code', currentCode);
+  if (error) { toast('❌ ' + error.message, 'error'); return; }
   const p = products[currentCode];
   updateAlertBanner(currentCode, p.qty, p.original);
   renderScanList(); renderStats(); renderAlertsPage();
@@ -805,25 +905,32 @@ document.addEventListener('click', e => {
 });
 
 // ─── Deduct / Restock action ─────────────────────────────────────
-$('btn-action').addEventListener('click', () => {
+$('btn-action').addEventListener('click', async () => {
   if (!currentCode) return;
   const p = products[currentCode];
   const qty = parseInt($('qty-input').value, 10);
   if (!qty || qty < 1) { toast('⚠️ Enter a valid quantity', 'error'); return; }
 
+  let newQty, newOriginal = p.original, type;
   if (actionMode === 'deduct') {
     if (qty > p.qty) { toast(`⚠️ Only ${p.qty} available`, 'error'); return; }
-    p.qty -= qty; totalOut += qty;
-    history.push({ type:'deduct', code:currentCode, name:p.name, qty, after:p.qty, time:Date.now() });
-    LS.set('ss_products', products); LS.set('ss_history', history);
-    toast(`✅ −${qty} deducted. ${p.qty} remaining.`, 'success');
+    newQty = p.qty - qty;
+    type = 'deduct';
   } else {
-    p.qty += qty;
-    if (p.qty > p.original) p.original = p.qty;
-    history.push({ type:'restock', code:currentCode, name:p.name, qty, after:p.qty, time:Date.now() });
-    LS.set('ss_products', products); LS.set('ss_history', history);
-    toast(`✅ +${qty} restocked. Now ${p.qty} in stock.`, 'success');
+    newQty = p.qty + qty;
+    if (newQty > newOriginal) newOriginal = newQty;
+    type = 'restock';
   }
+
+  const { error: e1 } = await sb.from('products').update({ qty: newQty, original: newOriginal }).eq('code', currentCode);
+  if (e1) { toast('❌ ' + e1.message, 'error'); return; }
+  const { error: e2 } = await sb.from('history').insert({ type, code: currentCode, name: p.name, qty, after: newQty });
+  if (e2) { toast('❌ ' + e2.message, 'error'); return; }
+
+  p.qty = newQty; p.original = newOriginal;
+  if (type === 'deduct') { totalOut += qty; toast(`✅ −${qty} deducted. ${p.qty} remaining.`, 'success'); }
+  else { toast(`✅ +${qty} restocked. Now ${p.qty} in stock.`, 'success'); }
+  history.push({ type, code:currentCode, name:p.name, qty, after:p.qty, time:Date.now() });
 
   const cl = stockCls(p.qty, p.original);
   $('res-current').textContent = p.qty;
@@ -861,7 +968,7 @@ $('modal-close').addEventListener('click', closeModal);
 $('modal-cancel').addEventListener('click', closeModal);
 $('modal-product').addEventListener('click', e => { if(e.target===$('modal-product')) closeModal(); });
 
-$('modal-save').addEventListener('click', () => {
+$('modal-save').addEventListener('click', async () => {
   const code = $('m-barcode').value.trim();
   const name = $('m-name').value.trim();
   const qty  = parseInt($('m-qty').value,10);
@@ -869,14 +976,18 @@ $('modal-save').addEventListener('click', () => {
   if (!code||!name||!qty||qty<1) { toast('⚠️ Fill all required fields', 'error'); return; }
   if (editingCode) {
     const orig = products[editingCode].original;
-    products[editingCode] = { name, qty, original:qty>orig?qty:orig, category:cat };
+    const newOriginal = qty>orig?qty:orig;
+    const { error } = await sb.from('products').update({ name, qty, original: newOriginal, category: cat }).eq('code', editingCode);
+    if (error) { toast('❌ ' + error.message, 'error'); return; }
+    products[editingCode] = { name, qty, original:newOriginal, category:cat };
     toast(`✅ "${name}" updated`, 'success');
   } else {
     if (products[code]) { toast('⚠️ Barcode already exists', 'error'); return; }
+    const { error } = await sb.from('products').insert({ code, name, qty, original: qty, category: cat });
+    if (error) { toast('❌ ' + error.message, 'error'); return; }
     products[code] = { name, qty, original:qty, category:cat };
     toast(`✅ "${name}" added`, 'success');
   }
-  LS.set('ss_products', products);
   closeModal(); renderTable($('search-input').value, $('cat-filter').value); renderScanList(); renderStats(); renderAlertsPage();
 });
 
@@ -887,12 +998,13 @@ function openDelete(code) {
 }
 $('delete-cancel').addEventListener('click', () => $('modal-delete').classList.remove('open'));
 $('modal-delete').addEventListener('click', e => { if(e.target===$('modal-delete')) $('modal-delete').classList.remove('open'); });
-$('delete-confirm').addEventListener('click', () => {
+$('delete-confirm').addEventListener('click', async () => {
   if (!deletingCode) return;
   const name = products[deletingCode].name;
-  delete products[deletingCode];
+  const { error } = await sb.from('products').delete().eq('code', deletingCode);
+  if (error) { toast('❌ ' + error.message, 'error'); return; }
+  delete products[deletingCode]; delete thresholds[deletingCode];
   if (currentCode===deletingCode) { currentCode=null; $('result-card').style.display='none'; $('threshold-box').style.display='none'; }
-  LS.set('ss_products', products);
   $('modal-delete').classList.remove('open');
   renderTable($('search-input').value, $('cat-filter').value); renderScanList(); renderStats(); renderAlertsPage();
   toast(`🗑 "${name}" deleted`, 'success'); deletingCode=null;
@@ -923,7 +1035,7 @@ document.querySelectorAll('.stab').forEach(t => t.addEventListener('click', () =
 // ─── Export ────────────────────────────────────────────────────────
 $('btn-export').addEventListener('click', () => {
   const data = {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     products,
     history,
@@ -945,30 +1057,34 @@ $('import-input').addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = ev => {
+  reader.onload = async ev => {
     try {
       const data = JSON.parse(ev.target.result);
       if (!data.products) throw new Error('Invalid file');
-      const count = Object.keys(data.products).length;
-      if (!confirm(`Import ${count} products from "${file.name}"?\n\nThis will REPLACE your current data.`)) {
+      const entries = Object.entries(data.products);
+      const count = entries.length;
+      if (!confirm(`Import ${count} products from "${file.name}"?\n\nThis will be merged into the shared database (upsert by barcode).`)) {
         e.target.value = ''; return;
       }
-      products    = data.products    || {};
-      history     = data.history     || [];
-      thresholds  = data.thresholds  || {};
-      totalOut    = history.reduce((s,h) => s + (h.type!=='restock'?h.qty:0), 0);
-      LS.set('ss_products',   products);
-      LS.set('ss_history',    history);
-      LS.set('ss_thresholds', thresholds);
-      currentCode = null;
-      $('result-card').style.display = 'none';
-      $('threshold-box').style.display = 'none';
-      renderScanList(); renderHistory(); renderStats();
-      renderTable($('search-input').value, $('cat-filter').value);
-      renderAlertsPage();
+      const th = data.thresholds || {};
+      const rows = entries.map(([code, p]) => {
+        const t = th[code] || {};
+        return {
+          code, name: p.name, qty: p.qty, original: p.original, category: p.category || '',
+          qty_warn: t.qtyWarn ?? null, qty_crit: t.qtyCrit ?? null,
+          pct_warn: t.pctWarn ?? 30, pct_crit: t.pctCrit ?? 10
+        };
+      });
+      // Upsert in batches of 200
+      for (let i = 0; i < rows.length; i += 200) {
+        const batch = rows.slice(i, i+200);
+        const { error } = await sb.from('products').upsert(batch, { onConflict: 'code' });
+        if (error) throw error;
+      }
+      await loadAllData();
       toast(`✅ Imported ${count} products successfully`, 'success');
-    } catch {
-      toast('❌ Invalid file — could not import', 'error');
+    } catch (err) {
+      toast('❌ Invalid file or import error: ' + (err.message||''), 'error');
     }
     e.target.value = '';
   };
@@ -976,22 +1092,14 @@ $('import-input').addEventListener('change', e => {
 });
 
 
-// ─── Pre-load inventory data ───────────────────────────────────────
-(function() {
-  const existing = localStorage.getItem('ss_products');
-  if (!existing || Object.keys(JSON.parse(existing)).length === 0) {
-    const seed = {"M8301-64100": {"name": "OpenLAB CDS", "qty": 1, "original": 1, "category": "GC Spare Parts — GC1"}, "M8301-64000": {"name": "OpenLAB CDS", "qty": 1, "original": 1, "category": "GC Spare Parts — GC6"}, "G4600-64400": {"name": "GC and GCMS", "qty": 1, "original": 1, "category": "GC Spare Parts — GC1"}, "M8400-6001": {"name": "OpenLAB CDS Inst. Driver", "qty": 1, "original": 1, "category": "GC Spare Parts — GC1"}, "G1532-60590": {"name": "TCD Ship Kit", "qty": 2, "original": 2, "category": "GC Spare Parts — GC1"}, "G3440-60333": {"name": "SST Tube 1/16", "qty": 3, "original": 3, "category": "GC Spare Parts — GC2"}, "RDT-1020": {"name": "Split Vent Trap", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "5080-8750": {"name": "Fittings 1/8 Brass 20/PK", "qty": 1, "original": 1, "category": "GC Spare Parts — GC2"}, "8710-1709": {"name": "Mastercool Mini Tube Cut", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "0100-2144": {"name": "1/8 Brass Ball Valve", "qty": 4, "original": 4, "category": "GC Spare Parts — GC2"}, "5180-4121": {"name": "Cap 1/8 6/PK", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "ORING-A32785": {"name": "O-rings A32785", "qty": 7, "original": 7, "category": "GC Spare Parts — GC2"}, "5180-4160": {"name": "Tee 1/8 Brass Union 2/PK", "qty": 1, "original": 1, "category": "GC Spare Parts — GC2"}, "5180-4131": {"name": "Reducer Union 1/4x1/8 Brass", "qty": 3, "original": 3, "category": "GC Spare Parts — GC2"}, "8710-0911": {"name": "SW3 Wrench", "qty": 5, "original": 5, "category": "GC Spare Parts — GC2"}, "5066-1110": {"name": "Velcro for Gasclean Kit", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "SS-200-1.2": {"name": "Saog Lock Moleconnector", "qty": 3, "original": 3, "category": "GC Spare Parts — GC2"}, "8121-0940": {"name": "LAN Cable", "qty": 1, "original": 1, "category": "GC Spare Parts — GC3"}, "0100-1329": {"name": "Ferrule 1/16 Vespel", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "5181-3344": {"name": "O-rings 6 per bag", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "G3430-80062": {"name": "30 sccm H2 Frit", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "G3430-80063": {"name": "3.3 sccm H2 Frit", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "G3430-80061": {"name": "Aux Frit 400 sccm Air", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "G3430-20011": {"name": "Aux Frit Case Zero Restriction", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "0100-1526": {"name": "Brass 1/8 Plug", "qty": 4, "original": 4, "category": "GC Spare Parts — GC2"}, "0100-0090": {"name": "1/8 Union Tee Brass Swagelok", "qty": 4, "original": 4, "category": "GC Spare Parts — GC2"}, "G3470-60550": {"name": "Aux Tubing Block Assembly", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "G3430-60550": {"name": "Tubing Block Assembly", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "5181-7481": {"name": "1/8 Nut & Ferrule Set Brass", "qty": 4, "original": 4, "category": "GC Spare Parts — GC2"}, "G1531-60640": {"name": "FID Packed Ship Kit", "qty": 3, "original": 3, "category": "GC Spare Parts — GC2"}, "G3440-80153": {"name": "Regulator Model 262AA", "qty": 1, "original": 1, "category": "GC Spare Parts — GC2"}, "0100-1489": {"name": "1/8 inch Ferrule Set Brass", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "0100-0058": {"name": "Brass Nut 1/8", "qty": 2, "original": 2, "category": "GC Spare Parts — GC2"}, "G1530-20820": {"name": "Tubing Long Elbow 1/8in SS", "qty": 1, "original": 1, "category": "GC Spare Parts — GC2"}, "19091Z-236": {"name": "HP-1 Column", "qty": 1, "original": 1, "category": "GC Spare Parts — GC3"}, "CP17972": {"name": "Gas Clean Filter HydroCarbon", "qty": 1, "original": 1, "category": "GC Spare Parts — GC3"}, "CP8917": {"name": "VF-1ms Column", "qty": 1, "original": 1, "category": "GC Spare Parts — GC3"}, "128-0122E": {"name": "DB-1MS Column", "qty": 1, "original": 1, "category": "GC Spare Parts — GC3"}, "19091J-413": {"name": "HP-5 Column", "qty": 2, "original": 2, "category": "GC Spare Parts — GC3"}, "5182-0862": {"name": "Snap Crimp Vial Cap", "qty": 1, "original": 1, "category": "GC Spare Parts — GC2"}, "5188-5372": {"name": "FID MDL Sample Kit", "qty": 4, "original": 4, "category": "GC Spare Parts — GC4"}, "G4513-60800": {"name": "Ship Kit Injector", "qty": 1, "original": 1, "category": "GC Spare Parts — GC4"}, "G4513-68001": {"name": "Spot Vial Kit", "qty": 1, "original": 1, "category": "GC Spare Parts — GC4"}, "8710-2140": {"name": "Driver T-10 Torx Key", "qty": 1, "original": 1, "category": "GC Spare Parts — GC4"}, "07673-4010": {"name": "Diffusion Caps 4ML Vials", "qty": 2, "original": 2, "category": "GC Spare Parts — GC4"}, "5181-3354": {"name": "Syringe 10 UL", "qty": 1, "original": 1, "category": "GC Spare Parts — GC4"}, "G3430-60586": {"name": "FID Capillary/SSL or MMI", "qty": 2, "original": 2, "category": "GC Spare Parts — GC6"}, "19091P-S12": {"name": "HP-AL/S Column", "qty": 1, "original": 1, "category": "GC Spare Parts — GC5"}, "5080-8853": {"name": "Ferrule 0.5 Graphit 0.32", "qty": 1, "original": 1, "category": "GC Spare Parts — GC2"}, "M8301AA": {"name": "Open Lab CDS ChemStation", "qty": 1, "original": 1, "category": "GC Spare Parts — GC6"}, "P54280": {"name": "Dipropyl Sulfide 25G", "qty": 1, "original": 1, "category": "Chemicals — CHEM1"}, "238317": {"name": "Ethyl Methyl Sulfide 25G", "qty": 1, "original": 1, "category": "Chemicals — CHEM1"}, "471836": {"name": "1-Octanethiol 25ML", "qty": 1, "original": 1, "category": "Chemicals — CHEM1"}, "P54345": {"name": "2-Propylthiophene 1G", "qty": 2, "original": 2, "category": "Chemicals — CHEM1"}, "T31801": {"name": "Thiophene 100G", "qty": 1, "original": 1, "category": "Chemicals — CHEM1"}, "107247": {"name": "Diethyl Sulfide 100ML", "qty": 1, "original": 1, "category": "Chemicals — CHEM1"}, "620003": {"name": "Aquamax KF Reagent C 5ML", "qty": 8, "original": 8, "category": "Chemicals — CHEM2"}, "34868": {"name": "HYDRANAL Coulomat Oil 500ML", "qty": 1, "original": 1, "category": "Chemicals — CHEM2"}, "620006": {"name": "Aquamax KF Reagent A 100ML", "qty": 1, "original": 1, "category": "Chemicals — CHEM2"}, "61002": {"name": "Cou-Lo Formula C 5ML", "qty": 6, "original": 6, "category": "Chemicals — CHEM2"}, "32222": {"name": "Dichloromethane 2.5L", "qty": 2, "original": 2, "category": "Chemicals — CHEM4"}, "246654": {"name": "n-Heptane 2.5L", "qty": 1, "original": 1, "category": "Chemicals — CHEM5"}, "S5150": {"name": "Sodium Chloride 1KG", "qty": 1, "original": 1, "category": "Chemicals — CHEM6"}, "P5958": {"name": "Potassium Hydroxide 5KG", "qty": 1, "original": 1, "category": "Chemicals — CHEM6"}, "10316120": {"name": "EDTA 1KG", "qty": 1, "original": 1, "category": "Chemicals — CHEM6"}, "10314687": {"name": "Sodium Acetate 1KG", "qty": 1, "original": 1, "category": "Chemicals — CHEM6"}, "320099": {"name": "Acetic Acid 1KG", "qty": 1, "original": 1, "category": "Chemicals — CHEM6"}, "324558": {"name": "Ethylene Glycol 2.5L", "qty": 1, "original": 1, "category": "Chemicals — CHEM7"}, "360066": {"name": "2,2,4-Trimethylpentane 2.5L", "qty": 4, "original": 4, "category": "Chemicals — CHEM8"}, "20003L25": {"name": "Acetone 2.5L", "qty": 10, "original": 10, "category": "Chemicals — CHEM9"}, "UN1219": {"name": "Propanol-2 2.5L", "qty": 5, "original": 5, "category": "Chemicals — CHEM10"}, "330361": {"name": "Sodium Carbonate Anhydrous 1KG", "qty": 1, "original": 1, "category": "Chemicals — CHEM12"}, "SODAASH": {"name": "Soda Ash", "qty": 1, "original": 1, "category": "Chemicals — CHEM12"}, "34860": {"name": "Methanol 2.5L", "qty": 3, "original": 3, "category": "Chemicals — CHEM13"}, "457116": {"name": "Decane 2.5L", "qty": 1, "original": 1, "category": "Chemicals — CHEM13"}, "SILICONE-OIL": {"name": "Dow Corning Fluid Silicone Oil", "qty": 1, "original": 1, "category": "Chemicals — CHEM14"}, "A2B2": {"name": "Shell Helix HX5 20W-50 Oil 1L", "qty": 1, "original": 1, "category": "Chemicals — CHEM15"}, "712085": {"name": "Leybonol Vacuum Pump Oil 5L", "qty": 1, "original": 1, "category": "Chemicals — CHEM15"}, "WD40": {"name": "WD-40 400ML", "qty": 3, "original": 3, "category": "Chemicals — CHEM15"}, "R36389": {"name": "Decon Neutracon 5L", "qty": 1, "original": 1, "category": "Chemicals — CHEM15"}, "NIST211D": {"name": "Toluene 2.5L", "qty": 1, "original": 1, "category": "Chemicals — CHEM16"}, "M84402": {"name": "3-Methylthiophene 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "357790": {"name": "Thianaphthene 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "E26223": {"name": "Diethyl Disulfide 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "M84208": {"name": "2-Methylthiophene", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "358746": {"name": "Tetratetracosane 1G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "P54345-F": {"name": "2-Propylthiophene Fridge 1G", "qty": 3, "original": 3, "category": "Chemicals — Fridge1"}, "N31400": {"name": "1-Nonanethiol 5G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "52913": {"name": "Hexatetracontane 250MG", "qty": 2, "original": 2, "category": "Chemicals — Fridge1"}, "88152": {"name": "Tetratriacontane 250MG", "qty": 2, "original": 2, "category": "Chemicals — Fridge1"}, "74892": {"name": "Octatetracontane 100MG", "qty": 2, "original": 2, "category": "Chemicals — Fridge1"}, "87086": {"name": "Tetracontane 250MG", "qty": 2, "original": 2, "category": "Chemicals — Fridge1"}, "44250": {"name": "Dotetracontane 100MG", "qty": 2, "original": 2, "category": "Chemicals — Fridge1"}, "76491": {"name": "Pentacontane 250MG", "qty": 2, "original": 2, "category": "Chemicals — Fridge1"}, "294012": {"name": "Tert-Butyl Methyl Sulfide", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "CDS001487": {"name": "2-N-Butylthiophene 250MG", "qty": 5, "original": 5, "category": "Chemicals — Fridge1"}, "52930": {"name": "1-Hexene 5ML", "qty": 9, "original": 9, "category": "Chemicals — Fridge1"}, "28001": {"name": "n-Decane 100ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "219274": {"name": "Eicosane 100G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "T8752": {"name": "Tetracosane 1G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "241687": {"name": "Hexacosane 1G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "263842": {"name": "Triacontane 1G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "74893": {"name": "Octatriacontane", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "128503": {"name": "Heptadecane 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "504": {"name": "Octacosane 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "H12552": {"name": "Hexatriacontane 5MG", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "D223107": {"name": "Dotriacontane 5G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "134457": {"name": "Docosane 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "652": {"name": "Octadecane 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "VL9": {"name": "VL9 Reference Crude Oil", "qty": 3, "original": 3, "category": "Chemicals — Fridge1"}, "VL8": {"name": "VL8 Reference Crude Oil", "qty": 3, "original": 3, "category": "Chemicals — Fridge1"}, "48873": {"name": "ASTM D2887 Reference Gas Oil", "qty": 29, "original": 29, "category": "Chemicals — Fridge1"}, "T57401": {"name": "Tridecane 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "D221104": {"name": "Dodecane 100ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "296988": {"name": "Octane 100ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "P3406": {"name": "Pentadecane 25G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "U407": {"name": "Undecane 100ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "139386": {"name": "Hexane 100ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "N29406": {"name": "Nonane 100ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "H6703": {"name": "Hexadecane 500ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "H2198": {"name": "Heptane 500ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "D901": {"name": "Decane 500ML", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "32032-3": {"name": "1-Hexene 97% 1L", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "1030770": {"name": "Xylenes 2.5L", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "34294": {"name": "Silver Nitrate 1L", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "32222-F": {"name": "Dichloromethane Fridge 2.5L", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "16446": {"name": "Xylenes 1L", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "34855": {"name": "Cyclohexane 1L", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "172456": {"name": "Tetradecane 500G", "qty": 1, "original": 1, "category": "Chemicals — Fridge1"}, "NONE-CDS": {"name": "CDs", "qty": 2, "original": 2, "category": "Storage — A1"}, "PA-923": {"name": "LED Torch", "qty": 1, "original": 1, "category": "Storage — A1"}, "16475090116": {"name": "Light Mr Torch", "qty": 1, "original": 1, "category": "Storage — A1"}, "P392911": {"name": "Coated Silicone Septa", "qty": 28, "original": 28, "category": "Storage — A2"}, "KEL-PAPER": {"name": "Kel Fisher Paper Roll", "qty": 2, "original": 2, "category": "Storage — A2"}, "40644": {"name": "Precleaned Copper Tubing 1/4 OD", "qty": 2, "original": 2, "category": "Storage — A2"}, "48423": {"name": "Precleaned Copper Tubing 1/8 OD", "qty": 1, "original": 1, "category": "Storage — A2"}, "GLASS-250ML": {"name": "Glass Bottles 250 ML", "qty": 50, "original": 50, "category": "Storage — A3"}, "5185882": {"name": "Detector Tubes Sulphide 4HT", "qty": 16, "original": 16, "category": "Storage — A4"}, "5185881": {"name": "Detector Tubes Sulphide 4HP", "qty": 10, "original": 10, "category": "Storage — A4"}, "DOT-3E1800": {"name": "Gas Balloon Vessel", "qty": 26, "original": 26, "category": "Storage — AB5"}, "PW100PH150BAR": {"name": "Gas Balloon Vessel 0.285L", "qty": 2, "original": 2, "category": "Storage — AB5"}, "102362": {"name": "Water Purification", "qty": 2, "original": 2, "category": "Storage — AB5"}, "TW-43": {"name": "Liquid Withdrawal Device", "qty": 1, "original": 1, "category": "Storage — AB6"}, "M4042539": {"name": "Fume Cupboard Main Filter", "qty": 0, "original": 0, "category": "Storage — AB6"}, "SR1295": {"name": "Fume Cupboard Filter Sheets", "qty": 22, "original": 22, "category": "Storage — AB6"}, "65-2615RK": {"name": "H2S Sensor", "qty": 3, "original": 3, "category": "Storage — B1"}, "863B01": {"name": "Fire Blanket Folding", "qty": 1, "original": 1, "category": "Storage — B2"}, "GOGLE": {"name": "Gogle", "qty": 1, "original": 1, "category": "Storage — B2"}, "SAFTEY-GLASS": {"name": "Safety Glass", "qty": 8, "original": 8, "category": "Storage — B2"}, "BLACK-SAFTEY-GLASS": {"name": "Black Safety Glass", "qty": 8, "original": 8, "category": "Storage — B2"}, "FIRST-AID": {"name": "First Aid Kit", "qty": 2, "original": 2, "category": "Storage — B2"}, "MASK": {"name": "Mask", "qty": 7, "original": 7, "category": "Storage — B2"}, "EYE-WASH": {"name": "Eye Wash", "qty": 2, "original": 2, "category": "Storage — B2"}, "GLASS-100ML": {"name": "Glass Bottles 100 ML", "qty": 131, "original": 131, "category": "Storage — B3"}, "CUP-200ML": {"name": "200 ML Cup Bottles", "qty": 95, "original": 95, "category": "Storage — B3"}, "EN374": {"name": "Gloves 92-600", "qty": 9, "original": 9, "category": "Storage — B4"}, "TEMP-CTRL": {"name": "Temp Control Box", "qty": 4, "original": 4, "category": "Storage — C1"}, "WS-5023S": {"name": "Waterproof Socket", "qty": 24, "original": 24, "category": "Storage — C2"}, "SP02": {"name": "Safety Plug", "qty": 20, "original": 20, "category": "Storage — C2"}, "GLASS-500ML": {"name": "500 ML Glass Bottle", "qty": 10, "original": 10, "category": "Storage — C3"}, "GLASS-1L": {"name": "1 L Glass Bottle", "qty": 13, "original": 13, "category": "Storage — C3"}, "SAFETY-BOOT": {"name": "Safety Boot Red Wing", "qty": 11, "original": 11, "category": "Storage — CD6"}, "632036USD3": {"name": "Syring Unolok 3ML", "qty": 5, "original": 5, "category": "Storage — D1"}, "REF301750": {"name": "Needles 1.1 MM X 50 MM", "qty": 3, "original": 3, "category": "Storage — D2"}, "PVT-CABLE": {"name": "PVT Cell Cable Expro", "qty": 9, "original": 9, "category": "Storage — D4"}, "430025SA2": {"name": "Syring Dispo Van 2ML", "qty": 6, "original": 6, "category": "Storage — E1"}, "HEM-375MCO": {"name": "Pressure Transducer", "qty": 2, "original": 2, "category": "Storage — E4"}, "MS15-200": {"name": "1/8 OD Reg Stem Straight Valve", "qty": 6, "original": 6, "category": "Storage — E4"}, "SSL20-STORE": {"name": "SSL20", "qty": 44, "original": 44, "category": "Storage — E4"}, "FERRULE-1/8": {"name": "Ferrule 1/8", "qty": 20, "original": 20, "category": "Storage — E4"}, "140001": {"name": "Vacuum Pump", "qty": 2, "original": 2, "category": "Storage — EF6"}, "GLASS-50ML": {"name": "Glass Bottle 50ML", "qty": 33, "original": 33, "category": "Storage — F3"}, "THERMAL-GLOVES": {"name": "Thermal Work Gloves", "qty": 1, "original": 1, "category": "Storage — F4"}, "RUBBER-GLOVES": {"name": "Rubber Gloves", "qty": 1, "original": 1, "category": "Storage — F4"}, "SUPER-OLYMPIA": {"name": "Super Olympia Dress", "qty": 4, "original": 4, "category": "Storage — F4"}, "TISSUE-BIG": {"name": "Tissue Big Size", "qty": 8, "original": 8, "category": "Storage — G1"}, "SILICONE-TUBE": {"name": "Silicone Tubing 2X6mm", "qty": 1, "original": 1, "category": "Storage — G4"}, "CK300": {"name": "SI Analytics", "qty": 1, "original": 1, "category": "Storage — GH6"}, "BREJ5433": {"name": "Breathing Apparatus", "qty": 1, "original": 1, "category": "Storage — GH6"}, "DP4700": {"name": "Electric Drill", "qty": 1, "original": 1, "category": "Storage — H1"}, "KR703": {"name": "Electric Drill Black & Decker", "qty": 1, "original": 1, "category": "Storage — H1"}, "DEWALT": {"name": "DeWalt Kit", "qty": 1, "original": 1, "category": "Storage — H1"}, "31738": {"name": "Graduated Cylinder 100 ML", "qty": 6, "original": 6, "category": "Storage — J1"}, "31748": {"name": "Graduated Cylinder 250 ML", "qty": 6, "original": 6, "category": "Storage — J1"}, "FE250/3": {"name": "250L Conical Flask", "qty": 5, "original": 5, "category": "Storage — J1"}, "GTF0301": {"name": "GC Filter GTF0301", "qty": 2, "original": 2, "category": "Storage — J2"}, "GTF0201": {"name": "GC Filter GTF0201", "qty": 2, "original": 2, "category": "Storage — J2"}, "22020": {"name": "GC Filter 22020", "qty": 4, "original": 4, "category": "Storage — J2"}, "23201": {"name": "Tedlar Sample Bag", "qty": 3, "original": 3, "category": "Storage — K1"}, "200020": {"name": "Dilvac Dewar Flask", "qty": 1, "original": 1, "category": "Storage — K1"}, "68024": {"name": "Straight 25 Pipe Cleaners", "qty": 2, "original": 2, "category": "Storage — K2"}, "G6600-60037": {"name": "Ceramic Tube Kit SCF DP Burner", "qty": 3, "original": 3, "category": "Storage — K3"}, "5680399": {"name": "Weller WHS 40", "qty": 1, "original": 1, "category": "Storage — K4"}, "1390000": {"name": "Vacuum System Tester Kit", "qty": 2, "original": 2, "category": "Storage — K4"}, "DMA-35N": {"name": "Density Meter", "qty": 1, "original": 1, "category": "Storage — K5"}, "27211": {"name": "15 ML Clear Vial Screw Top", "qty": 2, "original": 2, "category": "Storage — L1"}, "27210": {"name": "7 ML Clear Vial Screw Top", "qty": 5, "original": 5, "category": "Storage — L3"}, "27209": {"name": "4 ML Clear Vial Screw Top", "qty": 2, "original": 2, "category": "Storage — L5"}, "VAPS101": {"name": "1/4 Male NPT - 1/8 Female Autoclave Adaptor", "qty": 5, "original": 5, "category": "Lab Spare Parts — PVT Lab"}, "VAPS102": {"name": "HP male 3/8 - LP female 1/8 Autoclave adaptor", "qty": 7, "original": 7, "category": "Lab Spare Parts — PVT Lab"}, "VAPS103": {"name": "SLB cylinder fittings", "qty": 7, "original": 7, "category": "Lab Spare Parts — PVT Lab"}, "VAPS104": {"name": "1/4 Male NPT - 1/4 Female Autoclave Adaptor", "qty": 2, "original": 2, "category": "Lab Spare Parts — PVT Lab"}, "VAPS105": {"name": "HP male 3/8 - HP female 1/4 Autoclave adaptor", "qty": 1, "original": 1, "category": "Lab Spare Parts — PVT Lab"}, "VAPS106": {"name": "1/8 SS Autoclave sleeve", "qty": 100, "original": 100, "category": "Lab Spare Parts — PVT Lab"}, "VAPS107": {"name": "1/8 SS Autoclave glands", "qty": 100, "original": 100, "category": "Lab Spare Parts — PVT Lab"}, "VAPS108": {"name": "1/16 SS Autoclave sleeves", "qty": 66, "original": 66, "category": "Lab Spare Parts — PVT Lab"}, "VAPS109": {"name": "1/16 SS Autoclave glands", "qty": 15, "original": 15, "category": "Lab Spare Parts — PVT Lab"}, "VAPS110": {"name": "MP Autoclave Straight Valves", "qty": 5, "original": 5, "category": "Lab Spare Parts — PVT Lab"}, "VAPS111": {"name": "QC Autoclave Valve 1 inlet 1 outlet", "qty": 5, "original": 5, "category": "Lab Spare Parts — E4"}, "VAPS112": {"name": "Cell Charge Autoclave Valve", "qty": 5, "original": 5, "category": "Lab Spare Parts — PVT Lab"}, "VAPS113": {"name": "Transfer Pump 2 inlet 1 outlet", "qty": 1, "original": 1, "category": "Lab Spare Parts — PVT Lab"}, "VAPS114": {"name": "New Flash Unit Valve", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS115": {"name": "Capillary Unit Valve", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS116": {"name": "1/4 NPT Male - 1/8 Autoclave Male crossover", "qty": 1, "original": 1, "category": "Lab Spare Parts — PVT Lab"}, "VAPS117": {"name": "LP Autoclave female-female connector", "qty": 2, "original": 2, "category": "Lab Spare Parts — PVT Lab"}, "VAPS118": {"name": "1/8 Autoclave Tee capillary viscosity", "qty": 2, "original": 2, "category": "Lab Spare Parts — PVT Lab"}, "VAPS119": {"name": "1/8 Fluted Connector", "qty": 10, "original": 10, "category": "Lab Spare Parts — PVT Lab"}, "VAPS120": {"name": "SS Ferrule Set 1/16 Swagelok", "qty": 4, "original": 4, "category": "Lab Spare Parts — PVT Lab"}, "VAPS121": {"name": "SS Ferrule Set 1/8 Swagelok", "qty": 5, "original": 5, "category": "Lab Spare Parts — PVT Lab"}, "VAPS122": {"name": "SS Ferrule Set 1/4 Swagelok", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS123": {"name": "SS Swagelok Nut 1/4 OD", "qty": 20, "original": 20, "category": "Lab Spare Parts — PVT Lab"}, "VAPS124": {"name": "SS Swagelok Nut 1/8 OD", "qty": 30, "original": 30, "category": "Lab Spare Parts — PVT Lab"}, "VAPS125": {"name": "SS Swagelok Nut 1/16 OD", "qty": 10, "original": 10, "category": "Lab Spare Parts — PVT Lab"}, "VAPS126": {"name": "1/4 Swage Plug", "qty": 9, "original": 9, "category": "Lab Spare Parts"}, "VAPS127": {"name": "1/8 Swage Plug", "qty": 0, "original": 0, "category": "Lab Spare Parts"}, "VAPS128": {"name": "1/8 Swage Cap", "qty": 0, "original": 0, "category": "Lab Spare Parts"}, "VAPS129": {"name": "1/4 Swage Cap", "qty": 0, "original": 0, "category": "Lab Spare Parts"}, "VAPS130": {"name": "1/16 Swage Cap", "qty": 0, "original": 0, "category": "Lab Spare Parts"}, "VAPS131": {"name": "1/4 NPT Female Blank", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS132": {"name": "1/4 NPT Blank PDS Bottle", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS133": {"name": "1/4 NPT Blank Luxfer Bottle", "qty": 2, "original": 2, "category": "Lab Spare Parts — PVT Lab"}, "VAPS135": {"name": "SS 1/4 NPT Male - 1/4 Swage Tube Adaptor", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS136": {"name": "SS Swagelok 1/8 Tube Reducer", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS137": {"name": "SS Swagelok 1/4 Tube Reducer", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS138": {"name": "1/8 SS Swagelok Port Connector", "qty": 3, "original": 3, "category": "Lab Spare Parts — PVT Lab"}, "VAPS142": {"name": "1/16 SS Swagelok Union", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS143": {"name": "1/8 SS Swagelok Union", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS144": {"name": "1/4 SS Swagelok Union", "qty": 4, "original": 4, "category": "Lab Spare Parts"}, "VAPS145": {"name": "1/16 SS Swagelok Tee", "qty": 4, "original": 4, "category": "Lab Spare Parts"}, "VAPS146": {"name": "1/8 SS Swagelok Tee", "qty": 0, "original": 0, "category": "Lab Spare Parts"}, "VAPS147": {"name": "1/4 SS Swagelok Tee", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS148": {"name": "1/8 SS Swagelok Cross", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS149": {"name": "1/4 - 1/16 SS Swagelok Reducer", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS150": {"name": "1/4 - 1/8 SS Swagelok Reducer", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS204": {"name": "O-ring FR58/90 ID 18.64MM", "qty": 118, "original": 118, "category": "Lab Spare Parts — F2"}, "VAPS205": {"name": "O-ring AF69/90 ID 18.64MM H2S", "qty": 10, "original": 10, "category": "Lab Spare Parts — F2"}, "VAPS206": {"name": "Fluolion Backup Rings OD 25.4MM", "qty": 280, "original": 280, "category": "Lab Spare Parts — F2"}, "VAPS207": {"name": "O-ring FR58/90 ID 9.25MM", "qty": 354, "original": 354, "category": "Lab Spare Parts — F2"}, "VAPS208": {"name": "O-ring AF69/90 ID 7.65MM H2S", "qty": 501, "original": 501, "category": "Lab Spare Parts — F2"}, "VAPS209": {"name": "Flourocarbon FR58/90 ID 7.65MM", "qty": 358, "original": 358, "category": "Lab Spare Parts — F2"}, "VAPS210": {"name": "Isco Teledyne Shear Pins", "qty": 6, "original": 6, "category": "Lab Spare Parts"}, "VAPS211": {"name": "RS Components Cotter Pins", "qty": 50, "original": 50, "category": "Lab Spare Parts"}, "VAPS212": {"name": "Proserv Circlips", "qty": 9, "original": 9, "category": "Lab Spare Parts"}, "VAPS214": {"name": "Kulite Pressure Transducer", "qty": 2, "original": 2, "category": "Lab Spare Parts — E4"}, "VAPS217": {"name": "Pump Fuse 250V 1AMP", "qty": 6, "original": 6, "category": "Lab Spare Parts"}, "VAPS225": {"name": "Piston Glide Rings Proserv", "qty": 10, "original": 10, "category": "Lab Spare Parts"}, "VAPS227": {"name": "Isco Teledyne Pump Head Seal", "qty": 4, "original": 4, "category": "Lab Spare Parts"}, "VAPS228": {"name": "Isco Teledyne Pump Piston Seal", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS229": {"name": "Cryogenic Distillation Flask", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS230": {"name": "Flash Test Conical Flask 125ml", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS231": {"name": "Condensate Trap with Side Arm", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS232": {"name": "Sep Test Flasks 10 ml", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS233": {"name": "Lubriplate Grease", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS235": {"name": "Model SA Pressure Transducer Honeywell", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS236": {"name": "ESH Trace Heating 50w", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS237": {"name": "ESH Trace Heating TempCon ST64 Type1", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS238": {"name": "ESH Trace Heating TempCon ST64 Type2", "qty": 8, "original": 8, "category": "Lab Spare Parts"}, "VAPS239": {"name": "ESH Heating Jacket 85x300mm", "qty": 4, "original": 4, "category": "Lab Spare Parts"}, "VAPS240": {"name": "ESH Heating Jacket 230x700mm", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS241": {"name": "ESH Heating Jacket 50x700mm", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS242": {"name": "Gastec Pump Set GV100", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS243": {"name": "Gastec Tubes 1-40% 4HT", "qty": 1, "original": 1, "category": "Lab Spare Parts — A4"}, "VAPS244": {"name": "Gastec Tubes 0.25-20% 4HP", "qty": 0, "original": 0, "category": "Lab Spare Parts — A4"}, "VAPS245": {"name": "Gastec Tubes 0.05-4% 4HH", "qty": 1, "original": 1, "category": "Lab Spare Parts — A4"}, "VAPS265": {"name": "Oerlikon Leybold Vacuum Pump", "qty": 3, "original": 3, "category": "Lab Spare Parts — EF6"}, "VAPS267": {"name": "Exhaust Filter AF8 Vacuum Pump", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS268": {"name": "Centering Ring DN16KF", "qty": 4, "original": 4, "category": "Lab Spare Parts"}, "VAPS269": {"name": "Clamping Ring DN 10/16 KF", "qty": 8, "original": 8, "category": "Lab Spare Parts"}, "VAPS270": {"name": "Elbow DN 16 KF", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS271": {"name": "Flange with Hose Nozzle DN16 KF", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS272": {"name": "Dirt Trap", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS273": {"name": "Filters for Vacuum Pump", "qty": 9, "original": 9, "category": "Lab Spare Parts"}, "VAPS274": {"name": "Vacuum Pump Oil 5L", "qty": 5, "original": 5, "category": "Lab Spare Parts"}, "VAPS277": {"name": "Pack Injection Septa", "qty": 9, "original": 9, "category": "Lab Spare Parts"}, "VAPS278": {"name": "Paper Roll Single", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS279": {"name": "Hydranal Coulomat CG 50ml", "qty": 5, "original": 5, "category": "Lab Spare Parts"}, "VAPS280": {"name": "Hydranal Coulomat Oil 100ml", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS281": {"name": "Line Cutter 1/8 to 7/8 OD", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS282": {"name": "Line Deburrer", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS283": {"name": "Pro 1/4 Air Blow Gun 12bar", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS285": {"name": "Snoop Leak Detector Swagelok", "qty": 5, "original": 5, "category": "Lab Spare Parts"}, "VAPS286": {"name": "Flash Units O-rings", "qty": 10, "original": 10, "category": "Lab Spare Parts"}, "VAPS287": {"name": "Dewar Cryogenic Jar 150ml", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS288": {"name": "Dewar Cryogenic Jar 350ml", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS289": {"name": "Dewar Cryogenic SS Vessel 1000ml", "qty": 4, "original": 4, "category": "Lab Spare Parts"}, "VAPS290": {"name": "Hoke Cryo Gas Receiver", "qty": 8, "original": 8, "category": "Lab Spare Parts"}, "VAPS401": {"name": "Spectrol Regulator for CG", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS402": {"name": "Spectrol Regulator for VG", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS404": {"name": "Agilent Silica Gel Refill", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS405": {"name": "Agilent Hydrocarbon Trap Refill", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS406": {"name": "Triple Bench Top Filter", "qty": 9, "original": 9, "category": "Lab Spare Parts"}, "VAPS407": {"name": "Combi Fuel Bench Top Filter", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS409": {"name": "Agilent Moisture Trap 400cc", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS411": {"name": "Gas GC Capillary Column HP-1", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS412": {"name": "Agilent DB-1MS Column", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS418": {"name": "Agilent O-ring Liner for GC", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS419": {"name": "O-ring for Liner 10/pk", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS420": {"name": "Crawford Column Cutter Pack 4", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS421": {"name": "Focus Liners Pkt/5", "qty": 6, "original": 6, "category": "Lab Spare Parts"}, "VAPS422": {"name": "Jet for Liquid GC 43mm", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS424": {"name": "Ferrule 0.5 Graphite Capillary", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS426": {"name": "Agilent Inlet Septa 11mm Pack 50", "qty": 3, "original": 3, "category": "Lab Spare Parts"}, "VAPS427": {"name": "Column Fitting", "qty": 6, "original": 6, "category": "Lab Spare Parts"}, "VAPS428": {"name": "Crawford Blanking Plug", "qty": 5, "original": 5, "category": "Lab Spare Parts"}, "VAPS430": {"name": "Agilent Ignitor Glow Plug", "qty": 1, "original": 1, "category": "Lab Spare Parts"}, "VAPS431": {"name": "Agilent Washers for Golden Seal", "qty": 24, "original": 24, "category": "Lab Spare Parts"}, "VAPS432": {"name": "Agilent Gold Plated Seal with Cross", "qty": 5, "original": 5, "category": "Lab Spare Parts"}, "VAPS433": {"name": "Agilent Reducing Nut for Inlet", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS438": {"name": "FID/TCD Heater/Sensor Assembly", "qty": 2, "original": 2, "category": "Lab Spare Parts"}, "VAPS439": {"name": "Tubing Block Assembly", "qty": 1, "original": 1, "category": "Lab Spare Parts"}};
-    localStorage.setItem('ss_products', JSON.stringify(seed));
-  }
-})();
-
 // ─── Service Worker ────────────────────────────────────────────────
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
 // ─── Init ──────────────────────────────────────────────────────────
-renderScanList(); renderHistory(); renderStats(); renderTable(); renderAlertsPage();
+loadAllData();
+setupRealtime();
 </script>
 </body>
 </html>
